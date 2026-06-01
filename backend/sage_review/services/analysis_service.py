@@ -127,37 +127,90 @@ class AnalysisService:
         self,
         section_details: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Average expected evidence scores across analyzed sections."""
-        grouped_scores: dict[str, list[float]] = {}
+        """Summarize section-specific evidence without listing every criterion."""
+        summary: list[dict[str, Any]] = []
         for section in section_details:
-            expected_areas = set(section.get("expected_areas", []))
-            for item in section.get("evidence_coverage", []):
-                area = str(item["Evidence Area"])
-                if area in expected_areas:
-                    grouped_scores.setdefault(area, []).append(
-                        float(item["Similarity Score"])
-                    )
-
-        summary = []
-        for area, scores in grouped_scores.items():
-            average_score = round(sum(scores) / len(scores), 4)
-            if average_score >= 0.65:
-                level = "Strong"
-            elif average_score >= 0.45:
-                level = "Moderate"
-            else:
-                level = "Weak"
-            summary.append(
-                {
-                    "Evidence Area": area,
-                    "Similarity Score": average_score,
-                    "Coverage Level": level,
-                    "Interpretation": (
-                        "Average expected evidence coverage across extracted sections."
-                    ),
-                }
+            section_name = str(
+                section.get("section_name")
+                or section.get("scoring_section")
+                or section.get("predicted_section")
+                or "Unknown"
             )
-        return sorted(summary, key=lambda item: float(item["Similarity Score"]), reverse=True)
+            coverage_rows = [
+                item
+                for item in section.get("evidence_coverage", [])
+                if str(item.get("Evidence Area", "")) in set(section.get("expected_areas", []))
+            ]
+            weak_rows = sorted(
+                (
+                    row
+                    for row in coverage_rows
+                    if row.get("Coverage Level") == "Weak"
+                ),
+                key=lambda row: float(row.get("Similarity Score", 0.0)),
+            )
+            strong_rows = sorted(
+                (
+                    row
+                    for row in coverage_rows
+                    if row.get("Coverage Level") == "Strong"
+                ),
+                key=lambda row: float(row.get("Similarity Score", 0.0)),
+                reverse=True,
+            )
+            critical_missing_rows = [
+                row
+                for row in weak_rows
+                if float(row.get("Similarity Score", 0.0)) < 0.30
+            ][:3]
+
+            for row in weak_rows[:3]:
+                summary.append(
+                    self._build_manuscript_summary_row(
+                        section_name,
+                        row,
+                        "Top Weak Criterion",
+                    )
+                )
+            for row in strong_rows[:3]:
+                summary.append(
+                    self._build_manuscript_summary_row(
+                        section_name,
+                        row,
+                        "Strongest Criterion",
+                    )
+                )
+            for row in critical_missing_rows:
+                summary.append(
+                    self._build_manuscript_summary_row(
+                        section_name,
+                        row,
+                        "Critical Missing Criterion",
+                    )
+                )
+
+        return summary
+
+    def _build_manuscript_summary_row(
+        self,
+        section_name: str,
+        row: dict[str, Any],
+        summary_type: str,
+    ) -> dict[str, Any]:
+        """Build a backward-compatible evidence summary row with section context."""
+        evidence_area = str(row.get("Evidence Area", ""))
+        return {
+            "Section Name": section_name,
+            "Evidence Area": f"{section_name}: {evidence_area}",
+            "Criterion": evidence_area,
+            "Similarity Score": row.get("Similarity Score", 0.0),
+            "Coverage Level": row.get("Coverage Level", "Weak"),
+            "Summary Type": summary_type,
+            "Interpretation": (
+                f"{summary_type} for {section_name}: "
+                f"{row.get('Interpretation', '')}"
+            ),
+        }
 
     def analyze_api_section(
         self,

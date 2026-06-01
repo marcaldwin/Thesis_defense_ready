@@ -77,6 +77,12 @@ from backend.sage_review.core.section_extractor import (
     MAJOR_REQUIRED_SECTIONS,
     extract_sections_with_metadata,
 )
+from backend.sage_review.models.responses import (
+    AnalysisResponse,
+    EvaluationResponse,
+    HealthResponse,
+    RevisionComparisonResponse,
+)
 
 
 analysis_service = AnalysisService()
@@ -301,6 +307,122 @@ def attach_report(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def normalize_analysis_response(result: dict[str, Any]) -> dict[str, Any]:
+    """Add normalized response fields while preserving legacy frontend keys."""
+    score = result.get("overall_score", result.get("defense_score"))
+    risk = result.get("overall_risk_level", result.get("risk_level"))
+    report_filename = result.get("report_filename")
+    diagnosis = result.get("dynamic_diagnosis") or result.get(
+        "plain_language_diagnosis"
+    )
+    next_best_action = result.get("dynamic_next_best_action") or result.get(
+        "next_best_action"
+    )
+    suggested_revision_wording = result.get(
+        "dynamic_suggested_revision_wording",
+        result.get("suggested_revision_wording", []),
+    )
+    defense_questions = result.get(
+        "dynamic_defense_questions",
+        result.get("defense_questions", []),
+    )
+
+    result.setdefault("score", score)
+    result.setdefault("readiness_score", score)
+    result.setdefault("risk", risk)
+    result.setdefault("confidence", result.get("analysis_confidence"))
+    result.setdefault(
+        "alignment_matrix",
+        result.get("raw_alignment_results") or result.get("alignment_results", []),
+    )
+    result.setdefault(
+        "evidence",
+        result.get("manuscript_evidence_summary")
+        or result.get("evidence_coverage", []),
+    )
+    result.setdefault("sections", result.get("section_details", []))
+    result.setdefault(
+        "feedback",
+        {
+            "diagnosis": diagnosis,
+            "next_best_action": next_best_action,
+            "priority_fixes": result.get("priority_fixes", []),
+            "revision_suggestions": result.get("revision_suggestions", []),
+            "suggested_revision_wording": suggested_revision_wording,
+            "defense_questions": defense_questions,
+            "defense_notes": result.get(
+                "defense_notes",
+                result.get("overall_defense_notes", []),
+            ),
+            "recommendations": result.get(
+                "recommendations",
+                result.get("section_recommendations"),
+            ),
+            "responsible_ai_warnings": result.get("responsible_ai_warnings", []),
+        },
+    )
+    result.setdefault(
+        "report",
+        {
+            "filename": report_filename,
+            "download_url": (
+                f"/download-report/{report_filename}" if report_filename else None
+            ),
+        },
+    )
+    return result
+
+
+def normalize_revision_response(result: dict[str, Any]) -> dict[str, Any]:
+    """Add normalized revision-comparison fields while preserving legacy keys."""
+    comparison = result.get("comparison", {})
+    result.setdefault("revision_summary", comparison.get("summary"))
+    result.setdefault("score_change", comparison.get("score_improvement"))
+    result.setdefault(
+        "semantic_improvement",
+        comparison.get(
+            "semantic_improvement_score",
+            comparison.get("semantic_improvement"),
+        ),
+    )
+    result.setdefault(
+        "evidence_changes",
+        {
+            "comparison_table": comparison.get(
+                "evidence_comparison_table",
+                comparison.get("evidence_comparison", []),
+            ),
+            "improved_areas": comparison.get(
+                "improved_evidence_areas",
+                comparison.get("improved_areas", []),
+            ),
+            "resolved_areas": comparison.get(
+                "resolved_weak_areas",
+                comparison.get("resolved_areas", []),
+            ),
+            "remaining_weak_areas": comparison.get("remaining_weak_areas", []),
+        },
+    )
+    return result
+
+
+def normalize_evaluation_response(result: dict[str, Any]) -> dict[str, Any]:
+    """Add normalized evaluation fields while preserving legacy keys."""
+    results_filename = result.get("results_filename")
+    result.setdefault("metrics", result.get("summary", {}))
+    result.setdefault("rows", result.get("results", []))
+    result.setdefault(
+        "report",
+        {
+            "filename": results_filename,
+            "download_url": (
+                f"/download-report/{results_filename}" if results_filename else None
+            ),
+        },
+    )
+    return result
+
+
 def apply_revision_guardrails(result: dict[str, Any]) -> dict[str, Any]:
     """Attach responsible AI warnings and filter unsafe revision feedback."""
     generated_feedback = [
@@ -325,29 +447,29 @@ def apply_revision_guardrails(result: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
+@app.get("/health", response_model=HealthResponse)
+def health() -> HealthResponse:
     """Health check endpoint."""
-    return {"status": "ok"}
+    return HealthResponse(status="ok")
 
 
-@app.post("/analyze-section")
+@app.post("/analyze-section", response_model=AnalysisResponse)
 async def analyze_section(request: Request) -> dict[str, Any]:
     """Analyze one pasted or uploaded thesis section."""
     text, filename = await extract_text_from_request(request)
     result = analyze_section_pipeline(text, source_filename=filename)
-    return attach_report(result)
+    return normalize_analysis_response(attach_report(result))
 
 
-@app.post("/analyze-full-manuscript")
+@app.post("/analyze-full-manuscript", response_model=AnalysisResponse)
 async def analyze_full_manuscript(request: Request) -> dict[str, Any]:
     """Analyze a full manuscript or large chapter."""
     text, filename = await extract_text_from_request(request)
     result = analyze_full_manuscript_pipeline(text, source_filename=filename)
-    return attach_report(result)
+    return normalize_analysis_response(attach_report(result))
 
 
-@app.post("/compare-revisions")
+@app.post("/compare-revisions", response_model=RevisionComparisonResponse)
 async def compare_revisions(payload: CompareRevisionsRequest) -> dict[str, Any]:
     """Compare original and revised thesis section versions."""
     original_result = apply_revision_guardrails(
@@ -357,15 +479,15 @@ async def compare_revisions(payload: CompareRevisionsRequest) -> dict[str, Any]:
         analyze_revision_text(payload.revised_text)
     )
     comparison = compare_revision_results(original_result, revised_result)
-    return {
+    return normalize_revision_response({
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "comparison": comparison,
         "original": original_result,
         "revised": revised_result,
-    }
+    })
 
 
-@app.post("/evaluate-dataset")
+@app.post("/evaluate-dataset", response_model=EvaluationResponse)
 async def evaluate_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
     """Run SAGE-Review on a labeled evaluation dataset CSV."""
     if not file.filename.lower().endswith(".csv"):
@@ -376,11 +498,11 @@ async def evaluate_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
     results_df = run_evaluation_on_dataset(df)
     summary = generate_evaluation_summary(results_df)
     results_path = Path(save_evaluation_results(results_df))
-    return {
+    return normalize_evaluation_response({
         "summary": summary,
         "results": dataframe_records(results_df),
         "results_filename": results_path.name,
-    }
+    })
 
 
 @app.get("/download-report/{filename}")
