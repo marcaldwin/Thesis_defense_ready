@@ -2,7 +2,7 @@
 
 import numpy as np
 
-from ai_analyzer import load_embedding_model
+from backend.sage_review.core.ai_analyzer import load_embedding_model
 
 
 ALIGNMENT_PAIRS = [

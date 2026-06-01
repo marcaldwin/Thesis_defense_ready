@@ -10,8 +10,11 @@ import time
 
 import pandas as pd
 
-from ai_analyzer import analyze_evidence_coverage, classify_section_zero_shot
-from ai_scoring import compute_defense_readiness_score
+from backend.sage_review.core.ai_analyzer import (
+    analyze_evidence_coverage,
+    classify_section_zero_shot,
+)
+from backend.sage_review.core.ai_scoring import compute_defense_readiness_score
 
 
 REQUIRED_COLUMNS = [

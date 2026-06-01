@@ -8,10 +8,8 @@ from __future__ import annotations
 
 from datetime import datetime
 from io import BytesIO
-import os
 from pathlib import Path
 import re
-import sys
 import time
 from typing import Any
 import hashlib
@@ -24,28 +22,30 @@ from pydantic import BaseModel
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
-os.chdir(PROJECT_ROOT)
 
-from ai_analyzer import analyze_evidence_coverage, classify_section_zero_shot
-from ai_scoring import compute_defense_readiness_score
-from alignment_analyzer import generate_alignment_matrix
-from document_loader import extract_text_from_uploaded_file
-from evidence_analyzer import normalize_section_name
-from evaluation_engine import (
+from backend.sage_review.core.ai_analyzer import (
+    analyze_evidence_coverage,
+    classify_section_zero_shot,
+)
+from backend.sage_review.core.ai_scoring import compute_defense_readiness_score
+from backend.sage_review.core.alignment_analyzer import generate_alignment_matrix
+from backend.sage_review.core.document_loader import extract_text_from_uploaded_file
+from backend.sage_review.core.evidence_analyzer import normalize_section_name
+from backend.sage_review.services.evaluation_engine import (
     generate_evaluation_summary,
     load_evaluation_dataset,
     run_evaluation_on_dataset,
     save_evaluation_results,
 )
-from highlight_analyzer import analyze_contextual_highlights
+from backend.sage_review.core.highlight_analyzer import analyze_contextual_highlights
 try:
-    from gemini_feedback_generator import generate_gemini_feedback
+    from backend.sage_review.services.gemini_feedback_generator import (
+        generate_gemini_feedback,
+    )
 except (ImportError, ModuleNotFoundError):
     def generate_gemini_feedback(**kwargs):  # type: ignore[misc]
         return {"feedback_mode": "Template fallback"}
-from feedback_generator import (
+from backend.sage_review.services.feedback_generator import (
     generate_defense_notes,
     generate_defense_questions,
     generate_plain_language_diagnosis,
@@ -57,13 +57,22 @@ from feedback_generator import (
     generate_panel_risk,
     generate_suggested_revision_wording,
 )
-from report_generator import generate_pdf_report, save_review_history
-from responsible_ai_guardrail import (
+from backend.sage_review.services.report_generator import (
+    generate_pdf_report,
+    save_review_history,
+)
+from backend.sage_review.core.responsible_ai_guardrail import (
     filter_unsafe_recommendations,
     generate_responsible_ai_warnings,
 )
-from revision_comparison import analyze_revision_text, compare_revision_results
-from section_extractor import MAJOR_REQUIRED_SECTIONS, extract_sections_with_metadata
+from backend.sage_review.services.revision_comparison import (
+    analyze_revision_text,
+    compare_revision_results,
+)
+from backend.sage_review.core.section_extractor import (
+    MAJOR_REQUIRED_SECTIONS,
+    extract_sections_with_metadata,
+)
 
 
 app = FastAPI(title="SAGE-Review API", version="1.0.0")

@@ -10,23 +10,26 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from alignment_analyzer import generate_alignment_matrix
-from ai_analyzer import analyze_evidence_coverage, classify_section_zero_shot
-from ai_scoring import compute_defense_readiness_score
-from document_loader import extract_text_from_uploaded_file
-from evaluation_engine import (
+from backend.sage_review.core.alignment_analyzer import generate_alignment_matrix
+from backend.sage_review.core.ai_analyzer import (
+    analyze_evidence_coverage,
+    classify_section_zero_shot,
+)
+from backend.sage_review.core.ai_scoring import compute_defense_readiness_score
+from backend.sage_review.core.document_loader import extract_text_from_uploaded_file
+from backend.sage_review.services.evaluation_engine import (
     ensure_evaluation_dataset_template,
     generate_evaluation_summary,
     load_evaluation_dataset,
     run_evaluation_on_dataset,
     save_evaluation_results,
 )
-from expert_validation import (
+from backend.sage_review.services.expert_validation import (
     compute_validation_summary,
     load_validation_results,
     save_validation_response,
 )
-from feedback_generator import (
+from backend.sage_review.services.feedback_generator import (
     generate_defense_notes,
     generate_defense_questions,
     generate_plain_language_diagnosis,
@@ -35,17 +38,23 @@ from feedback_generator import (
     generate_section_recommendation,
     generate_safer_wording_suggestions,
 )
-from report_generator import generate_pdf_report, save_review_history
-from revision_comparison import analyze_revision_text, compare_revision_results
-from responsible_ai_guardrail import (
+from backend.sage_review.services.report_generator import (
+    generate_pdf_report,
+    save_review_history,
+)
+from backend.sage_review.services.revision_comparison import (
+    analyze_revision_text,
+    compare_revision_results,
+)
+from backend.sage_review.core.responsible_ai_guardrail import (
     filter_unsafe_recommendations,
     generate_responsible_ai_warnings,
 )
-from section_extractor import (
+from backend.sage_review.core.section_extractor import (
     MAJOR_REQUIRED_SECTIONS,
     extract_sections_with_metadata,
 )
-from visualizer import (
+from backend.sage_review.utils.visualizer import (
     plot_alignment_matrix_chart,
     plot_evidence_coverage_chart,
     plot_section_scores_chart,

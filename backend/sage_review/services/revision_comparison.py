@@ -2,9 +2,12 @@
 
 import re
 
-from ai_analyzer import analyze_evidence_coverage, classify_section_zero_shot
-from ai_scoring import compute_defense_readiness_score
-from feedback_generator import (
+from backend.sage_review.core.ai_analyzer import (
+    analyze_evidence_coverage,
+    classify_section_zero_shot,
+)
+from backend.sage_review.core.ai_scoring import compute_defense_readiness_score
+from backend.sage_review.services.feedback_generator import (
     generate_defense_notes,
     generate_defense_questions,
     generate_priority_fixes,

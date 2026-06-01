@@ -6,8 +6,10 @@ practical defense preparation guidance. This is not a generic chatbot.
 
 import re
 
-from defense_question_generator import generate_section_defense_questions
-from evidence_analyzer import get_section_specific_criteria
+from backend.sage_review.services.defense_question_generator import (
+    generate_section_defense_questions,
+)
+from backend.sage_review.core.evidence_analyzer import get_section_specific_criteria
 
 
 RISKY_WORDING = {

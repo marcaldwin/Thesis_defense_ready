@@ -12,7 +12,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
 
-from evidence_analyzer import (
+from backend.sage_review.core.evidence_analyzer import (
     classify_coverage_level,
     get_section_specific_criteria,
     interpretation_for_criterion,
