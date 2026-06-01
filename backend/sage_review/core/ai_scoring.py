@@ -1,6 +1,9 @@
 """Explainable defense readiness scoring for SAGE-Review."""
 
-from evidence_analyzer import get_section_specific_criteria, normalize_section_name
+from backend.sage_review.core.evidence_analyzer import (
+    get_section_specific_criteria,
+    normalize_section_name,
+)
 
 
 _SUFFICIENT_WORD_COUNTS: dict[str, int] = {

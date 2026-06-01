@@ -1,6 +1,9 @@
 import re
+from pathlib import Path
 
-with open("feedback_generator.py", "r", encoding="utf-8") as f:
+feedback_generator_path = Path(__file__).with_name("feedback_generator.py")
+
+with open(feedback_generator_path, "r", encoding="utf-8") as f:
     text = f.read()
 
 # 1. Remove SECTION_EXPECTED_AREAS
@@ -50,5 +53,5 @@ new_templates = """    templates = {
     }"""
 text = re.sub(r"    templates = \{.*?    \}\n", new_templates + "\n", text, flags=re.DOTALL)
 
-with open("feedback_generator.py", "w", encoding="utf-8") as f:
+with open(feedback_generator_path, "w", encoding="utf-8") as f:
     f.write(text)
