@@ -38,6 +38,7 @@ from backend.sage_review.services.feedback_generator import (
     generate_section_recommendation,
     generate_safer_wording_suggestions,
 )
+from backend.sage_review.services.analysis_service import AnalysisService
 from backend.sage_review.services.report_generator import (
     generate_pdf_report,
     save_review_history,
@@ -59,6 +60,9 @@ from backend.sage_review.utils.visualizer import (
     plot_evidence_coverage_chart,
     plot_section_scores_chart,
 )
+
+
+analysis_service = AnalysisService()
 
 
 def normalize_analysis_text(value: object) -> str:
@@ -219,207 +223,12 @@ def build_manuscript_evidence_summary(
 
 def analyze_text_section(text: str, section_name: str | None = None) -> dict[str, object]:
     """Run the existing AI/NLP pipeline for one text section."""
-    clean_text = normalize_analysis_text(text)
-    if not clean_text:
-        raise ValueError("The selected section has no readable text to analyze.")
-
-    stats = get_basic_text_stats(clean_text)
-    classification = classify_section_zero_shot(clean_text)
-    predicted_section = str(classification["predicted_section"])
-    evidence_result = analyze_evidence_coverage(clean_text, predicted_section)
-    evidence_coverage = list(evidence_result["evidence_coverage"])
-    score_result = compute_defense_readiness_score(
-        evidence_coverage,
-        predicted_section,
-        classification_confidence=float(classification["confidence"]),
-    )
-    expected_areas = score_result["criteria_used"]
-    strong_areas = list(evidence_result["strong_areas"])
-    needs_improvement_areas = list(evidence_result["weak_areas"]) + list(
-        evidence_result["moderate_areas"]
-    )
-    priority_fixes = generate_priority_fixes(
-        score_result,
-        evidence_coverage,
-        predicted_section,
-    )
-    revision_suggestions = generate_revision_suggestions(
-        predicted_section,
-        evidence_coverage,
-        score_result,
-    )
-    wording_suggestions = generate_safer_wording_suggestions(clean_text)
-    defense_questions = generate_defense_questions(
-        predicted_section,
-        evidence_coverage,
-        score_result,
-    )
-    defense_notes = generate_defense_notes(score_result)
-    diagnosis = generate_plain_language_diagnosis(
-        section_name or predicted_section,
-        float(score_result["score"]),
-        str(score_result["risk_level"]),
-        strong_areas,
-        needs_improvement_areas,
-    )
-    section_recommendations = generate_section_recommendation(
-        section_name or predicted_section,
-        needs_improvement_areas,
-    )
-    generated_feedback = [
-        priority_fixes,
-        revision_suggestions,
-        section_recommendations,
-        wording_suggestions,
-        defense_questions,
-        defense_notes,
-    ]
-    responsible_ai_warnings = generate_responsible_ai_warnings(
-        clean_text,
-        generated_feedback,
-    )
-    priority_fixes = filter_unsafe_recommendations(priority_fixes)
-    revision_suggestions = filter_unsafe_recommendations(revision_suggestions)
-    section_recommendations = filter_unsafe_recommendations(section_recommendations)
-    defense_notes = filter_unsafe_recommendations(defense_notes)
-    strong_count, moderate_count, weak_count, top_weak_areas = count_evidence_levels(
-        evidence_coverage
-    )
-
-    return {
-        "section_name": section_name or predicted_section,
-        "input_text": clean_text,
-        "text_preview": clean_text[:1000],
-        "predicted_section": predicted_section,
-        "section_confidence": round(float(classification["confidence"]) * 100, 2),
-        "section_scores": classification["all_scores"],
-        "word_count": stats["word_count"],
-        "character_count": stats["character_count"],
-        "evidence_coverage": evidence_coverage,
-        "defense_score": score_result["defense_score"],
-        "risk_level": score_result["risk_level"],
-        "score_summary": build_score_summary(score_result),
-        "expected_areas": expected_areas,
-        "criteria_used": list(evidence_result["criteria_used"]),
-        "expected_items": score_result["expected_items"],
-        "strong_areas": strong_areas,
-        "needs_improvement_areas": needs_improvement_areas,
-        "plain_language_diagnosis": diagnosis,
-        "section_recommendations": section_recommendations,
-        "strengths": score_result["strengths"],
-        "deductions": score_result["deductions"],
-        "score_breakdown": score_result["score_breakdown"],
-        "priority_fixes": priority_fixes,
-        "revision_suggestions": revision_suggestions,
-        "safer_wording_suggestions": wording_suggestions,
-        "defense_questions": defense_questions,
-        "defense_notes": defense_notes,
-        "responsible_ai_warnings": responsible_ai_warnings,
-        "strong_evidence_count": strong_count,
-        "moderate_evidence_count": moderate_count,
-        "weak_evidence_count": weak_count,
-        "top_weak_areas": top_weak_areas,
-    }
+    return analysis_service.analyze_streamlit_section(text, section_name)
 
 
 def analyze_full_manuscript(text: str) -> dict[str, object]:
     """Extract and analyze thesis sections, then compute overall readiness."""
-    clean_text = normalize_analysis_text(text)
-    extraction_result = extract_sections_with_metadata(clean_text)
-    extracted_sections = dict(extraction_result["sections"])
-    extraction_status = dict(extraction_result["extraction_status"])
-    sections_needing_review = list(extraction_result["sections_needing_review"])
-    missing_major_sections = list(extraction_result["missing_major_sections"])
-    objectives_confident = (
-        extraction_status.get("Objectives of the Study") == "confidently extracted"
-    )
-    raw_alignment_results = generate_alignment_matrix(extracted_sections)
-    alignment_results = [
-        item
-        for item in raw_alignment_results
-        if item["Similarity Score"] is not None
-        and (
-            objectives_confident
-            or "Objectives of the Study" not in str(item["Section Pair"])
-        )
-    ]
-    section_details = []
-    section_summary_rows = []
-
-    for section_name, section_text in extracted_sections.items():
-        clean_section_text = normalize_analysis_text(section_text)
-        if not clean_section_text:
-            continue
-
-        section_result = analyze_text_section(clean_section_text, section_name)
-        section_details.append(section_result)
-        section_summary_rows.append(
-            {
-                "Section Name": section_name,
-                "Predicted Section": section_result["predicted_section"],
-                "Word Count": section_result["word_count"],
-                "Defense Score": section_result["defense_score"],
-                "Risk Level": section_result["risk_level"],
-                "Weak Evidence Count": section_result["weak_evidence_count"],
-                "Top Weak Areas": ", ".join(section_result["top_weak_areas"]),
-            }
-        )
-
-    average_score = (
-        sum(float(item["defense_score"]) for item in section_details)
-        / len(section_details)
-        if section_details
-        else 0.0
-    )
-    weak_alignment_count = sum(
-        1
-        for item in alignment_results
-        if item["Alignment Level"] == "Weak Alignment"
-    )
-    missing_alignment_count = 0
-    alignment_deduction = min(20, 5 * weak_alignment_count)
-    overall_score = max(
-        40.0 if section_details else 0.0,
-        min(
-            100.0,
-            average_score
-            - (5 * len(missing_major_sections))
-            - alignment_deduction,
-        ),
-    )
-    analysis_confidence = (
-        "Complete"
-        if not missing_major_sections and not sections_needing_review
-        else "Partial"
-    )
-    main_issues = []
-    if "Objectives of the Study" in missing_major_sections:
-        main_issues.append("Objectives section not confidently extracted")
-    if not objectives_confident:
-        main_issues.append("Alignment analysis incomplete")
-    if any(int(item["Weak Evidence Count"]) > 0 for item in section_summary_rows):
-        main_issues.append("Some sections have weak evidence coverage")
-    manuscript_evidence_summary = build_manuscript_evidence_summary(section_details)
-
-    return {
-        "overall_score": round(overall_score, 2),
-        "overall_risk_level": overall_risk_level(overall_score),
-        "alignment_results": alignment_results,
-        "raw_alignment_results": raw_alignment_results,
-        "alignment_deduction": alignment_deduction,
-        "weak_alignment_count": weak_alignment_count,
-        "missing_alignment_count": missing_alignment_count,
-        "objectives_confident": objectives_confident,
-        "analysis_confidence": analysis_confidence,
-        "main_issues": main_issues,
-        "manuscript_evidence_summary": manuscript_evidence_summary,
-        "section_results": section_summary_rows,
-        "section_details": section_details,
-        "extracted_sections": extracted_sections,
-        "extraction_status": extraction_status,
-        "sections_needing_review": sections_needing_review,
-        "missing_major_sections": missing_major_sections,
-    }
+    return analysis_service.analyze_streamlit_full_manuscript(text)
 
 
 def show_evidence_summary(coverage_table: pd.DataFrame) -> None:
