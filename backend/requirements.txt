@@ -1,0 +1,15 @@
+fastapi
+uvicorn[standard]
+python-multipart
+pydantic
+streamlit
+pandas
+numpy
+matplotlib
+scikit-learn
+sentence-transformers
+transformers
+torch
+reportlab
+python-docx
+PyPDF2

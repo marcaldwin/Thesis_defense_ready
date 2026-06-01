@@ -1,0 +1,3 @@
+sample_id,section_text,true_section,manual_score,manual_issues
+sample_001,Paste one thesis section here.,Methodology,75,Dataset Description; Model Evaluation Metrics
+sample_002,Paste another thesis section here.,Results and Discussion,68,Confusion Matrix / Error Analysis; Usability Evaluation
