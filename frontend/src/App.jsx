@@ -595,6 +595,7 @@ const MAJOR_STATUS_TONES = {
   "Detected Major Heading": "ok",
   "Detected Chapter Marker": "ok",
   "Merged Split Heading": "ok",
+  "Derived Subsection from Introduction": "warn",
   "Fallback Extracted from Introduction": "warn",
   "Fallback Extracted": "warn",
   "Ignored Caption": "warn",
@@ -606,6 +607,21 @@ const MAJOR_STATUS_TONES = {
 
 function statusTone(status) {
   return MAJOR_STATUS_TONES[status] || "muted";
+}
+
+function resolvedSectionLabel(section) {
+  if (!section) return "Unknown / Mixed Section";
+  return section.resolved_section_label
+    || section["Resolved Section Label"]
+    || section.display_section
+    || section["Display Section"]
+    || section.predicted_section
+    || section["Predicted Section"]
+    || section.scoring_section
+    || section["Scoring Section"]
+    || section.section_name
+    || section["Section Name"]
+    || "Unknown / Mixed Section";
 }
 
 function DetectedHeadingsPanel({ majorHeadings = [] }) {
@@ -655,6 +671,11 @@ function HeadingsTable({ rows }) {
                 <td>{h.normalized_section || h.normalized}</td>
                 <td>
                   <Badge value={status} tone={statusTone(status)} />
+                  {h.explanation && (
+                    <div className="muted small" style={{ marginTop: 4 }}>
+                      {h.explanation}
+                    </div>
+                  )}
                 </td>
               </tr>
             );
@@ -687,9 +708,14 @@ function SectionSummaryPanel({ sectionResults = [] }) {
           <tbody>
             {sectionResults.map((s, i) => (
               <tr key={i}>
-                <td>{s["Section Name"]}</td>
+                <td>{resolvedSectionLabel(s)}</td>
                 <td>{s["Scoring Section"]}</td>
-                <td className="muted small">{s["Predicted Section"]}</td>
+                <td className="muted small">
+                  {resolvedSectionLabel(s)}
+                  {s["Semantic Predicted Section"] && s["Semantic Predicted Section"] !== resolvedSectionLabel(s) && (
+                    <div>Semantic: {s["Semantic Predicted Section"]}</div>
+                  )}
+                </td>
                 <td>{s["Word Count"]}</td>
                 <td>
                   <strong>{s["Defense Score"]}</strong>
@@ -842,7 +868,7 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
       summary = result.evidence_summary_simple || summary;
       currentSectionCount = result.word_count || 0;
     } else {
-      const sec = result.section_details?.find(s => (s.section_name || s.predicted_section) === selectedSectionName);
+      const sec = result.section_details?.find(s => resolvedSectionLabel(s) === selectedSectionName);
       rows = sec ? (sec.evidence_display_rows || sec.evidence_coverage) : [];
       detailedRows = sec ? sec.evidence_coverage : [];
       summary = sec ? sec.evidence_summary_simple : summary;
@@ -885,7 +911,7 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
       }
   }
 
-  const sectionOptions = isManuscript && result.section_details ? ["Overall", ...result.section_details.map(s => s.section_name || s.predicted_section)] : [];
+  const sectionOptions = isManuscript && result.section_details ? ["Overall", ...result.section_details.map(s => resolvedSectionLabel(s))] : [];
 
   return (
     <section className="panel">
@@ -942,8 +968,8 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
         Showing evidence coverage for:<br/>
         - Document hash: {result.document_hash ? result.document_hash.substring(0, 8) : "N/A"}<br/>
         - File name: {result.source_filename || "Pasted Text"}<br/>
-        - Selected section: {selectedSectionName === "Overall" ? (isManuscript ? "Overall (Average)" : result.section_name || result.predicted_section) : selectedSectionName}<br/>
-        - Scoring section: {isManuscript && selectedSectionName !== "Overall" ? result.section_details?.find(s => (s.section_name || s.predicted_section) === selectedSectionName)?.scoring_section : result.scoring_section || "Overall"}<br/>
+        - Selected section: {selectedSectionName === "Overall" ? (isManuscript ? "Overall (Average)" : resolvedSectionLabel(result)) : selectedSectionName}<br/>
+        - Scoring section: {isManuscript && selectedSectionName !== "Overall" ? result.section_details?.find(s => resolvedSectionLabel(s) === selectedSectionName)?.scoring_section : result.scoring_section || "Overall"}<br/>
         - Section word count: {currentSectionCount}<br/>
         - Criteria count: {chartData.length}<br/>
         - Average similarity: {avgSimilarity.toFixed(3)}
@@ -1040,7 +1066,7 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
       <summary>
         <div className="detail-card-head">
           <span className="detail-section-name">
-            {section.section_name || section.predicted_section}
+            {resolvedSectionLabel(section)}
           </span>
           <span className="detail-meta">
             <Badge value={section.risk_level} tone={riskBadgeTone(section.risk_level)} />

@@ -59,6 +59,35 @@ class AnalysisServiceError(Exception):
 class AnalysisService:
     """Coordinate document normalization, analysis, scoring, feedback, and results."""
 
+    def resolve_section_label(
+        self,
+        section_name: str | None = None,
+        scoring_section: str | None = None,
+        semantic_prediction: str | None = None,
+    ) -> dict[str, str]:
+        """Resolve the user-facing section label from reliable sources first."""
+        candidates = [
+            ("heading", section_name),
+            ("scoring_section", scoring_section),
+            ("semantic_classifier", semantic_prediction),
+        ]
+        for source, value in candidates:
+            normalized = normalize_section_name(value or "")
+            if normalized != "Unknown":
+                confidence = "High" if source in {"heading", "scoring_section"} else "Medium"
+                return {
+                    "display_section": normalized,
+                    "resolved_section_label": normalized,
+                    "section_label_source": source,
+                    "section_label_confidence": confidence,
+                }
+        return {
+            "display_section": "Unknown / Mixed Section",
+            "resolved_section_label": "Unknown / Mixed Section",
+            "section_label_source": "semantic_classifier",
+            "section_label_confidence": "Low",
+        }
+
     def normalize_analysis_text(self, value: object) -> str:
         """Convert pasted or extracted content into safe plain text for analysis."""
         if value is None:
@@ -597,14 +626,23 @@ class AnalysisService:
         start_time = time.perf_counter()
         analysis_text = clean_text[:10000]
         classification = classify_section_zero_shot(analysis_text)
-        predicted_section = str(classification["predicted_section"])
-        canonical_section = normalize_section_name(section_name or predicted_section)
+        semantic_predicted_section = str(classification["predicted_section"])
+        canonical_section = normalize_section_name(
+            section_name or semantic_predicted_section
+        )
+        section_label = self.resolve_section_label(
+            section_name=section_name,
+            scoring_section=canonical_section,
+            semantic_prediction=semantic_predicted_section,
+        )
+        predicted_section = section_label["resolved_section_label"]
 
         print("--------------------------------------------------")
         print("SECTION DEBUG")
         print(f"raw section_name:    {section_name}")
         print(f"canonical/scoring section: {canonical_section}")
-        print(f"predicted_section:   {predicted_section}")
+        print(f"semantic prediction: {semantic_predicted_section}")
+        print(f"resolved label:      {predicted_section}")
 
         evidence_result = analyze_evidence_coverage(canonical_section, analysis_text)
         evidence_coverage = list(evidence_result["evidence_coverage"])
@@ -746,9 +784,14 @@ class AnalysisService:
             "analysis_timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "document_hash": doc_hash,
             "source_filename": source_filename,
-            "section_name": section_name or predicted_section,
+            "section_name": section_label["display_section"],
+            "display_section": section_label["display_section"],
+            "resolved_section_label": section_label["resolved_section_label"],
+            "section_label_source": section_label["section_label_source"],
+            "section_label_confidence": section_label["section_label_confidence"],
             "scoring_section": canonical_section,
             "predicted_section": predicted_section,
+            "semantic_predicted_section": semantic_predicted_section,
             "section_confidence": round(float(classification["confidence"]) * 100, 2),
             "section_scores": classification["all_scores"],
             "word_count": len(clean_text.split()),
@@ -884,9 +927,20 @@ class AnalysisService:
             section_details.append(section_result)
             section_results.append(
                 {
-                    "Section Name": section_name,
+                    "Section Name": section_result["resolved_section_label"],
+                    "Display Section": section_result["display_section"],
+                    "Resolved Section Label": section_result[
+                        "resolved_section_label"
+                    ],
+                    "Section Label Source": section_result["section_label_source"],
+                    "Section Label Confidence": section_result[
+                        "section_label_confidence"
+                    ],
                     "Scoring Section": section_result["scoring_section"],
                     "Predicted Section": section_result["predicted_section"],
+                    "Semantic Predicted Section": section_result[
+                        "semantic_predicted_section"
+                    ],
                     "Word Count": section_result["word_count"],
                     "Defense Score": section_result["defense_score"],
                     "Risk Level": section_result["risk_level"],

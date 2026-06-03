@@ -50,6 +50,11 @@ class AnalysisResponse(BaseModel):
     risk: str | None = None
     risk_level: str | None = None
     confidence: str | float | None = None
+    display_section: str | None = None
+    resolved_section_label: str | None = None
+    section_label_source: str | None = None
+    section_label_confidence: str | None = None
+    semantic_predicted_section: str | None = None
     word_count: int | None = None
     processing_time_seconds: float | None = None
     feedback: FeedbackResponse | None = None

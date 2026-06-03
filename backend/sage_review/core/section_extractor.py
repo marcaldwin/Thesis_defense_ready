@@ -220,7 +220,7 @@ _STATUS_FRONT = "Ignored Front Matter"
 _STATUS_MINOR = "Ignored Minor Heading"
 _STATUS_TOC = "Ignored Table of Contents Entry"
 _STATUS_UNKNOWN = "Unknown"
-_STATUS_FALLBACK = "Fallback Extracted from Introduction"
+_STATUS_FALLBACK = "Derived Subsection from Introduction"
 
 _MAJOR_STATUSES = {_STATUS_MAJOR, _STATUS_CHAPTER, _STATUS_MERGED}
 _SECTION_BREAK_STATUSES = _MAJOR_STATUSES | {_STATUS_FRONT}
@@ -668,7 +668,7 @@ def _build_status_map(
         elif src == "chapter":
             status[name] = "chapter fallback"
         elif src == "fallback":
-            status[name] = "fallback extracted"
+            status[name] = "derived subsection from introduction"
         else:
             status[name] = "confidently extracted"
     return status
@@ -745,6 +745,10 @@ def extract_sections_with_metadata(text: str) -> dict[str, object]:
                 "normalized": "Objectives of the Study",
                 "line_number": 0,
                 "status": _STATUS_FALLBACK,
+                "explanation": (
+                    "The Objectives section was not detected as a standalone "
+                    "major heading, so it was derived from the Introduction section."
+                ),
                 "chapter": None,
                 "is_chapter_marker": False,
             }
