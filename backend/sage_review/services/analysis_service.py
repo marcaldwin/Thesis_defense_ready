@@ -191,6 +191,186 @@ class AnalysisService:
 
         return summary
 
+    def _display_similarity(self, value: Any) -> float:
+        """Clamp raw similarity for user-facing evidence display."""
+        try:
+            score = float(value)
+        except (TypeError, ValueError):
+            score = 0.0
+        return round(max(0.0, min(1.0, score)), 4)
+
+    def _evidence_next_action(self, criterion: str, section_name: str) -> str:
+        """Return a concrete action for weak evidence criteria."""
+        actions = {
+            "Research Purpose": "State the study purpose in one direct sentence and connect it to the problem.",
+            "Method Summary": "Briefly name the method, model, or development process used.",
+            "Key Results Summary": "Add the main measured result or finding from the results section.",
+            "Problem Context": "Explain the real-world problem before introducing the proposed system.",
+            "Research Gap": "State what existing studies or systems still fail to address.",
+            "Study Purpose": "Add a clear sentence explaining what the study aims to accomplish.",
+            "Objectives Mention": "List or reference the specific objectives clearly.",
+            "Related Studies Coverage": "Add relevant studies and explain how each relates to the current work.",
+            "Comparison of Existing Systems": "Compare existing systems by features, methods, performance, and limitations.",
+            "Research Gap Synthesis": "Synthesize the common gap across studies instead of listing sources only.",
+            "Dataset Description": "State dataset source, size, classes, split, and distribution.",
+            "Participant or Sample Description": "State sample size, selection criteria, and sampling method.",
+            "Data Collection Procedure": "Describe how data was gathered, recorded, labeled, and validated.",
+            "Preprocessing Description": "Explain cleaning, normalization, augmentation, encoding, or preparation steps.",
+            "Model or Algorithm Description": "Describe the model, algorithm, architecture, or system logic clearly enough to reproduce.",
+            "Evaluation Metrics": "Reference the accuracy, confusion matrix, usability result, or table number that supports this claim.",
+            "Model Evaluation Metrics": "Report accuracy, precision, recall, F1-score, or another metric tied to the objective.",
+            "Confusion Matrix or Error Analysis": "Add a confusion matrix, error table, or paragraph explaining misclassified cases.",
+            "Latency or Response Time Results": "Report measured response time, device conditions, and number of test runs.",
+            "Usability Evaluation Results": "Summarize user tasks, ratings, respondents, or usability table results.",
+            "Objective-to-Result Connection": "Add a table or paragraph showing which result supports each objective.",
+            "Summary of Main Findings": "Summarize the main findings using specific results from the study.",
+            "Objective Support": "Connect each conclusion to a specific objective and finding.",
+            "Limitations": "State scope boundaries and explain how they affect interpretation of the findings.",
+            "Avoidance of Overclaims": "Revise broad claims so they match the actual measured results and study scope.",
+            "Recommendations": "Add practical recommendations based on the findings and limitations.",
+            "Future Work": "Identify concrete next work, such as more data, more users, or broader testing.",
+        }
+        return actions.get(
+            criterion,
+            f"Add section-specific evidence for {criterion.lower()} in the {section_name} section.",
+        )
+
+    def _build_evidence_display_item(
+        self,
+        row: dict[str, Any],
+        section_name: str,
+    ) -> dict[str, Any]:
+        """Build a simplified evidence item while preserving legacy keys."""
+        criterion = str(row.get("Evidence Area") or row.get("criterion") or "")
+        raw_score = row.get("Similarity Score", row.get("similarity_score", 0.0))
+        display_score = self._display_similarity(raw_score)
+        level = str(row.get("Coverage Level") or row.get("coverage_level") or "Weak")
+        next_action = self._evidence_next_action(criterion, section_name)
+        return {
+            "section": section_name,
+            "criterion": criterion,
+            "coverage_level": level,
+            "display_score": display_score,
+            "display_percent": round(display_score * 100, 1),
+            "display_score_label": f"{round(display_score * 100)}%",
+            "raw_similarity_score": raw_score,
+            "next_action": next_action,
+            "Evidence Area": criterion,
+            "Similarity Score": display_score,
+            "Coverage Level": level,
+            "Interpretation": row.get("Interpretation", ""),
+        }
+
+    def build_section_evidence_summary(
+        self,
+        section_name: str,
+        evidence_coverage: list[dict[str, Any]],
+        expected_areas: list[str],
+    ) -> dict[str, Any]:
+        """Build concise evidence lists for default display."""
+        expected = set(expected_areas)
+        relevant_rows = [
+            row
+            for row in evidence_coverage
+            if str(row.get("Evidence Area", "")) in expected
+        ]
+        display_rows = [
+            self._build_evidence_display_item(row, section_name)
+            for row in relevant_rows
+        ]
+        weak_rows = sorted(
+            (
+                row
+                for row in display_rows
+                if row["coverage_level"] == "Weak"
+            ),
+            key=lambda row: row["display_score"],
+        )
+        strongest_rows = sorted(
+            (
+                row
+                for row in display_rows
+                if row["coverage_level"] == "Strong"
+            ),
+            key=lambda row: row["display_score"],
+            reverse=True,
+        )
+        critical_rows = [
+            row
+            for row in weak_rows
+            if row["display_score"] < 0.30
+        ]
+
+        default_rows = []
+        seen = set()
+        for row in critical_rows[:3] + weak_rows[:5] + strongest_rows[:3]:
+            key = (row["section"], row["criterion"])
+            if key not in seen:
+                default_rows.append(row)
+                seen.add(key)
+
+        summary = {
+            "critical_missing_evidence": critical_rows[:3],
+            "top_weak_evidence": weak_rows[:5],
+            "strongest_evidence": strongest_rows[:3],
+        }
+        return {
+            "evidence_summary_simple": summary,
+            "critical_missing_evidence": summary["critical_missing_evidence"],
+            "top_weak_evidence": summary["top_weak_evidence"],
+            "strongest_evidence": summary["strongest_evidence"],
+            "evidence_display_rows": default_rows,
+        }
+
+    def build_manuscript_evidence_summary_simple(
+        self,
+        section_details: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Build a manuscript-level evidence summary grouped by section."""
+        critical = []
+        weak = []
+        strong = []
+        for section in section_details:
+            section_name = str(
+                section.get("section_name")
+                or section.get("scoring_section")
+                or section.get("predicted_section")
+                or "Unknown"
+            )
+            section_summary = section.get("evidence_summary_simple") or {}
+            critical.extend(section_summary.get("critical_missing_evidence", []))
+            weak.extend(section_summary.get("top_weak_evidence", []))
+            strong.extend(section_summary.get("strongest_evidence", []))
+
+        critical = sorted(critical, key=lambda row: row.get("display_score", 0.0))[:5]
+        weak = sorted(weak, key=lambda row: row.get("display_score", 0.0))[:8]
+        strong = sorted(
+            strong,
+            key=lambda row: row.get("display_score", 0.0),
+            reverse=True,
+        )[:5]
+
+        display_rows = []
+        seen = set()
+        for row in critical + weak + strong:
+            key = (row.get("section"), row.get("criterion"))
+            if key not in seen:
+                display_rows.append(row)
+                seen.add(key)
+
+        summary = {
+            "critical_missing_evidence": critical,
+            "top_weak_evidence": weak,
+            "strongest_evidence": strong,
+        }
+        return {
+            "evidence_summary_simple": summary,
+            "critical_missing_evidence": critical,
+            "top_weak_evidence": weak,
+            "strongest_evidence": strong,
+            "evidence_display_rows": display_rows,
+        }
+
     def _build_manuscript_summary_row(
         self,
         section_name: str,
@@ -506,6 +686,11 @@ class AnalysisService:
             len(clean_text.split()),
             priority_fixes,
         )
+        section_evidence_summary = self.build_section_evidence_summary(
+            canonical_section,
+            evidence_coverage,
+            expected_areas,
+        )
         gemini_feedback = generate_gemini_feedback(
             section_name=canonical_section,
             section_text=analysis_text,
@@ -570,6 +755,15 @@ class AnalysisService:
             "character_count": len(clean_text),
             "text_preview": clean_text[:1000],
             "evidence_coverage": evidence_coverage,
+            "evidence_summary_simple": section_evidence_summary[
+                "evidence_summary_simple"
+            ],
+            "critical_missing_evidence": section_evidence_summary[
+                "critical_missing_evidence"
+            ],
+            "top_weak_evidence": section_evidence_summary["top_weak_evidence"],
+            "strongest_evidence": section_evidence_summary["strongest_evidence"],
+            "evidence_display_rows": section_evidence_summary["evidence_display_rows"],
             "criteria_used": list(evidence_result["criteria_used"]),
             "defense_score": round(section_score, 2),
             "risk_level": section_risk,
@@ -836,6 +1030,10 @@ class AnalysisService:
         print(f"First 3 evidence scores (1st section): {', '.join(scores_to_print)}")
         print("--------------------------------------------------")
 
+        manuscript_evidence_summary_simple = (
+            self.build_manuscript_evidence_summary_simple(section_details)
+        )
+
         return {
             "analysis_mode": "Full Manuscript Mode",
             "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
@@ -876,6 +1074,21 @@ class AnalysisService:
             "manuscript_evidence_summary": self.build_manuscript_evidence_summary(
                 section_details
             ),
+            "evidence_summary_simple": manuscript_evidence_summary_simple[
+                "evidence_summary_simple"
+            ],
+            "critical_missing_evidence": manuscript_evidence_summary_simple[
+                "critical_missing_evidence"
+            ],
+            "top_weak_evidence": manuscript_evidence_summary_simple[
+                "top_weak_evidence"
+            ],
+            "strongest_evidence": manuscript_evidence_summary_simple[
+                "strongest_evidence"
+            ],
+            "evidence_display_rows": manuscript_evidence_summary_simple[
+                "evidence_display_rows"
+            ],
             "top_weak_sections": top_weak_sections,
             "top_weak_alignment_pairs": top_weak_alignment_pairs,
             "overall_defense_notes": [

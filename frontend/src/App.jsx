@@ -433,6 +433,18 @@ function coverageFill(value) {
   return "#22d3ee";
 }
 
+function evidenceScoreLabel(row) {
+  if (row.display_score_label) return row.display_score_label;
+  const raw = Number(row["Similarity Score"] ?? row.similarity_score ?? 0);
+  const clamped = Math.max(0, Math.min(1, Number.isFinite(raw) ? raw : 0));
+  return `${Math.round(clamped * 100)}%`;
+}
+
+function evidenceChartScore(row) {
+  const raw = Number(row["Similarity Score"] ?? row.similarity_score ?? row.display_score ?? 0);
+  return Math.max(0, Math.min(1, Number.isFinite(raw) ? raw : 0));
+}
+
 function shortenPair(pair) {
   return String(pair || "")
     .replace(" <-> ", " ↔ ")
@@ -768,31 +780,87 @@ function AlignmentMatrixPanel({ rows = [] }) {
   );
 }
 
+function EvidenceSimpleSummary({ summary }) {
+  const groups = [
+    {
+      title: "Critical Missing Evidence",
+      rows: summary.critical_missing_evidence || []
+    },
+    {
+      title: "Weakest Evidence",
+      rows: summary.top_weak_evidence || []
+    },
+    {
+      title: "Strongest Evidence",
+      rows: summary.strongest_evidence || []
+    }
+  ];
+
+  if (!groups.some((group) => group.rows.length)) return null;
+
+  return (
+    <div className="grid-3" style={{ marginBottom: 12 }}>
+      {groups.map((group) => (
+        <div key={group.title}>
+          <h3 className="subhead">{group.title}</h3>
+          {group.rows.length ? (
+            <ul className="bare-list">
+              {group.rows.slice(0, 5).map((row, i) => (
+                <li key={i}>
+                  <Badge value={row.coverage_level || row["Coverage Level"]} tone={coverageBadgeTone(row.coverage_level || row["Coverage Level"])} />{" "}
+                  <strong>{row.section ? `${row.section}: ` : ""}{row.criterion || row["Evidence Area"]}</strong>
+                  {row.display_score_label && <> ({row.display_score_label})</>}
+                  {row.next_action && (
+                    <div className="muted small" style={{ marginTop: 4 }}>
+                      {row.next_action}
+                    </div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="muted small">None detected.</p>
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
   const [selectedSectionName, setSelectedSectionName] = useState("Overall");
 
   let rows = [];
+  let detailedRows = [];
+  let summary = result.evidence_summary_simple || null;
   let currentSectionCount = 0;
 
   if (isManuscript) {
     if (selectedSectionName === "Overall") {
-      rows = result.manuscript_evidence_summary || [];
+      rows = result.evidence_display_rows || result.manuscript_evidence_summary || [];
+      detailedRows = result.manuscript_evidence_summary || [];
+      summary = result.evidence_summary_simple || summary;
       currentSectionCount = result.word_count || 0;
     } else {
       const sec = result.section_details?.find(s => (s.section_name || s.predicted_section) === selectedSectionName);
-      rows = sec ? sec.evidence_coverage : [];
+      rows = sec ? (sec.evidence_display_rows || sec.evidence_coverage) : [];
+      detailedRows = sec ? sec.evidence_coverage : [];
+      summary = sec ? sec.evidence_summary_simple : summary;
       currentSectionCount = sec ? sec.word_count : 0;
     }
   } else {
-    rows = result.evidence_coverage || [];
+    rows = result.evidence_display_rows || result.evidence_coverage || [];
+    detailedRows = result.evidence_coverage || [];
+    summary = result.evidence_summary_simple || summary;
     currentSectionCount = result.word_count || 0;
   }
 
   if (!rows) rows = [];
+  if (!detailedRows) detailedRows = [];
 
   const chartData = rows.map((r) => ({
     name: r["Evidence Area"] || r.criterion,
-    score: Number(r["Similarity Score"] || r.similarity_score) || 0,
+    score: evidenceChartScore(r),
     level: r["Coverage Level"] || r.coverage_level
   }));
   const chartHeight = Math.max(220, chartData.length * 32 + 60);
@@ -803,7 +871,7 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
       if (prevResult.document_hash === result.document_hash && prevResult.source_filename !== result.source_filename) {
          warningMsg = "Uploaded text did not change. Please check document extraction.";
       } else if (prevResult.document_hash !== result.document_hash) {
-          let prevRows = isManuscript ? prevResult.manuscript_evidence_summary : prevResult.evidence_coverage;
+          let prevRows = isManuscript ? prevResult.evidence_display_rows || prevResult.manuscript_evidence_summary : prevResult.evidence_display_rows || prevResult.evidence_coverage;
           if (prevRows && rows && prevRows.length === rows.length) {
               const same = rows.every((r, i) => {
                   const p = prevRows[i];
@@ -834,7 +902,11 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
 
       {warningMsg && <div className="alert alert-warn" style={{ marginBottom: 12 }}>{warningMsg}</div>}
 
-      <h3 className="subhead">Criteria used for this section</h3>
+      {summary && (
+        <EvidenceSimpleSummary summary={summary} />
+      )}
+
+      <h3 className="subhead">Priority Evidence Display</h3>
       <div className="badge-row" style={{ marginBottom: 12 }}>
         {rows.map((r, i) => (
           <Badge key={i} value={r["Evidence Area"] || r.criterion} tone="muted" />
@@ -881,23 +953,54 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
           <thead>
             <tr>
               <th>Evidence Area</th>
-              <th>Similarity Score</th>
+              <th>Display Coverage</th>
               <th>Coverage Level</th>
+              <th>Next Action</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((r, i) => (
               <tr key={i}>
                 <td>{r["Evidence Area"] || r.criterion}</td>
-                <td>{Number(r["Similarity Score"] || r.similarity_score).toFixed(3)}</td>
+                <td>{evidenceScoreLabel(r)}</td>
                 <td>
                   <Badge value={r["Coverage Level"] || r.coverage_level} tone={coverageBadgeTone(r["Coverage Level"] || r.coverage_level)} />
                 </td>
+                <td className="muted small">{r.next_action || r.Interpretation}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
+      {detailedRows.length > 0 && (
+        <details style={{ marginTop: 12 }}>
+          <summary className="muted small">Show technical evidence details</summary>
+          <div className="table-wrap" style={{ marginTop: 12 }}>
+            <table className="data-table">
+              <thead>
+                <tr>
+                  <th>Evidence Area</th>
+                  <th>Raw Similarity</th>
+                  <th>Coverage Level</th>
+                  <th>Interpretation</th>
+                </tr>
+              </thead>
+              <tbody>
+                {detailedRows.map((r, i) => (
+                  <tr key={i}>
+                    <td>{r["Evidence Area"] || r.criterion}</td>
+                    <td>{Number(r["Similarity Score"] ?? r.similarity_score ?? 0).toFixed(3)}</td>
+                    <td>
+                      <Badge value={r["Coverage Level"] || r.coverage_level} tone={coverageBadgeTone(r["Coverage Level"] || r.coverage_level)} />
+                    </td>
+                    <td className="muted small">{r.Interpretation || r.interpretation}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
     </section>
   );
 }

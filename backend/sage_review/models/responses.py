@@ -55,6 +55,11 @@ class AnalysisResponse(BaseModel):
     feedback: FeedbackResponse | None = None
     evidence: list[Any] = Field(default_factory=list)
     evidence_coverage: list[Any] = Field(default_factory=list)
+    evidence_summary_simple: dict[str, Any] = Field(default_factory=dict)
+    critical_missing_evidence: list[Any] = Field(default_factory=list)
+    top_weak_evidence: list[Any] = Field(default_factory=list)
+    strongest_evidence: list[Any] = Field(default_factory=list)
+    evidence_display_rows: list[Any] = Field(default_factory=list)
     alignment_matrix: list[Any] = Field(default_factory=list)
     sections: list[Any] = Field(default_factory=list)
     score_breakdown: dict[str, Any] = Field(default_factory=dict)
