@@ -71,6 +71,11 @@ class AnalysisResponse(BaseModel):
     score_explanation: str | None = None
     score_reasons: list[Any] = Field(default_factory=list)
     priority_actions: list[Any] = Field(default_factory=list)
+    top_weak_sections_explained: list[Any] = Field(default_factory=list)
+    main_issues_explained: list[Any] = Field(default_factory=list)
+    issue_summary: dict[str, Any] = Field(default_factory=dict)
+    recommended_fix_order: list[Any] = Field(default_factory=list)
+    alignment_weaknesses_explained: list[Any] = Field(default_factory=list)
     report: ReportInfo | None = None
     report_filename: str | None = None
 

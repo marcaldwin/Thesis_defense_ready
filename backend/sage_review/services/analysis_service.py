@@ -261,7 +261,10 @@ class AnalysisService:
         }
         return actions.get(
             criterion,
-            f"Add section-specific evidence for {criterion.lower()} in the {section_name} section.",
+            (
+                f"In the {section_name} section, add a metric, table reference, "
+                f"or finding that supports {criterion.lower()}."
+            ),
         )
 
     def _build_evidence_display_item(
@@ -611,6 +614,206 @@ class AnalysisService:
             "score_reasons": score_reasons[:6],
             "priority_actions": priority_actions,
         }
+
+    def explain_alignment_weaknesses(
+        self,
+        alignment_results: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Explain weak or missing alignment pairs with concrete next actions."""
+        explained = []
+        for item in alignment_results:
+            level = str(item.get("Alignment Level", ""))
+            if level not in {"Weak Alignment", "Missing Section"}:
+                continue
+            pair = str(item.get("Section Pair", ""))
+            score = item.get("Similarity Score")
+            reason = str(item.get("Interpretation") or "")
+            next_action = "Add linking statements between the affected sections."
+            if "Methodology <-> Results and Discussion" in pair:
+                reason = (
+                    "The methodology describes procedures, but the results may not "
+                    "clearly report outputs for those procedures."
+                )
+                next_action = (
+                    "Add a table mapping methodology steps to reported results."
+                )
+            elif "Objectives of the Study <-> Results and Discussion" in pair:
+                reason = (
+                    "The results may not clearly show which findings answer each objective."
+                )
+                next_action = (
+                    "Add an objective-to-result mapping with table or figure references."
+                )
+            elif "Objectives of the Study <-> Conclusion" in pair:
+                reason = (
+                    "The conclusion may not clearly state how each objective was achieved."
+                )
+                next_action = (
+                    "Connect each conclusion to a specific objective and result."
+                )
+            elif "Results and Discussion <-> Conclusion" in pair:
+                reason = (
+                    "The conclusion may not clearly summarize or interpret the reported results."
+                )
+                next_action = (
+                    "Reference the main result, metric, or table behind each conclusion."
+                )
+
+            explained.append(
+                {
+                    "section_pair": pair,
+                    "similarity": score,
+                    "risk": item.get("Risk", "High"),
+                    "alignment_level": level,
+                    "reason": reason,
+                    "next_action": next_action,
+                }
+            )
+        return explained
+
+    def build_top_weak_sections_explained(
+        self,
+        section_details: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Build structured reasons for the lowest-scoring sections."""
+        weak_sections = sorted(
+            section_details,
+            key=lambda item: float(item.get("defense_score", 0.0)),
+        )[:3]
+        explained = []
+        for section in weak_sections:
+            section_name = str(
+                section.get("resolved_section_label")
+                or section.get("display_section")
+                or section.get("section_name")
+                or "Unknown / Mixed Section"
+            )
+            weak_items = (
+                section.get("critical_missing_evidence", [])
+                or section.get("top_weak_evidence", [])
+            )
+            weak_criteria = [
+                str(item.get("criterion") or item.get("Evidence Area"))
+                for item in weak_items[:3]
+            ]
+            weak_count = len(section.get("top_weak_evidence", []))
+            critical_count = len(section.get("critical_missing_evidence", []))
+            if weak_criteria:
+                reason = (
+                    f"This section has weak support for {', '.join(weak_criteria[:2])}."
+                )
+                next_action = str(
+                    weak_items[0].get("next_action")
+                    or section.get("next_best_action")
+                    or "Revise the weakest section-specific criteria first."
+                )
+            else:
+                reason = "This section has one of the lowest readiness scores."
+                next_action = str(
+                    section.get("next_best_action")
+                    or "Review the section evidence and add measurable support."
+                )
+
+            explained.append(
+                {
+                    "section": section_name,
+                    "score": section.get("defense_score"),
+                    "risk_level": section.get("risk_level"),
+                    "weak_criteria": weak_criteria,
+                    "reason": reason,
+                    "evidence_metric": (
+                        f"{critical_count} critical criteria and {weak_count} total weak criteria were weak"
+                    ),
+                    "next_action": next_action,
+                }
+            )
+        return explained
+
+    def build_main_issues_explained(
+        self,
+        top_weak_sections_explained: list[dict[str, Any]],
+        alignment_weaknesses_explained: list[dict[str, Any]],
+        missing_major_sections: list[str],
+        objectives_confident: bool,
+    ) -> list[dict[str, Any]]:
+        """Build actionable manuscript-level issue objects."""
+        issues = []
+        for weak_section in top_weak_sections_explained:
+            weak_criteria = list(weak_section.get("weak_criteria", []))
+            if not weak_criteria:
+                continue
+            section = str(weak_section["section"])
+            issues.append(
+                {
+                    "issue_type": "Weak Evidence Coverage",
+                    "title": f"{section} evidence is weak",
+                    "affected_sections": [section],
+                    "severity": weak_section.get("risk_level", "High"),
+                    "reason": f"{', '.join(weak_criteria[:3])} were weak.",
+                    "evidence_metric": weak_section.get("evidence_metric"),
+                    "next_action": weak_section.get("next_action"),
+                }
+            )
+
+        for alignment in alignment_weaknesses_explained[:3]:
+            pair = str(alignment.get("section_pair", ""))
+            issues.append(
+                {
+                    "issue_type": "Weak Alignment",
+                    "title": f"Weak alignment: {pair}",
+                    "affected_sections": [
+                        part.strip() for part in pair.split("<->") if part.strip()
+                    ],
+                    "severity": alignment.get("risk", "High"),
+                    "reason": alignment.get("reason"),
+                    "evidence_metric": f"similarity={alignment.get('similarity')}",
+                    "next_action": alignment.get("next_action"),
+                    "alignment": alignment,
+                }
+            )
+
+        if "Objectives of the Study" in missing_major_sections or not objectives_confident:
+            issues.append(
+                {
+                    "issue_type": "Section Extraction",
+                    "title": "Objectives section needs review",
+                    "affected_sections": ["Objectives of the Study"],
+                    "severity": "Moderate",
+                    "reason": (
+                        "Objectives were not confidently detected as a standalone major heading."
+                    ),
+                    "evidence_metric": "objectives_confident=false",
+                    "next_action": (
+                        "Add a clear Objectives of the Study heading or verify the derived objectives subsection."
+                    ),
+                }
+            )
+
+        return issues[:6]
+
+    def build_recommended_fix_order(
+        self,
+        main_issues_explained: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """Return the first three concrete fixes in priority order."""
+        severity_rank = {"High": 0, "Moderate": 1, "Medium": 1, "Low": 2}
+        sorted_issues = sorted(
+            main_issues_explained,
+            key=lambda item: severity_rank.get(str(item.get("severity")), 3),
+        )
+        fixes = []
+        for issue in sorted_issues[:3]:
+            sections = issue.get("affected_sections") or []
+            fixes.append(
+                {
+                    "priority": len(fixes) + 1,
+                    "section": sections[0] if sections else None,
+                    "fix": issue.get("next_action"),
+                    "why": issue.get("reason"),
+                    "issue_type": issue.get("issue_type"),
+                }
+            )
+        return fixes
 
     def analyze_api_section(
         self,
@@ -1038,6 +1241,31 @@ class AnalysisService:
             for item in alignment_results
             if item["Alignment Level"] in {"Weak Alignment", "Missing Section"}
         ][:5]
+        alignment_weaknesses_explained = self.explain_alignment_weaknesses(
+            alignment_results
+        )
+        top_weak_sections_explained = self.build_top_weak_sections_explained(
+            section_details
+        )
+        main_issues_explained = self.build_main_issues_explained(
+            top_weak_sections_explained,
+            alignment_weaknesses_explained,
+            missing_major_sections,
+            objectives_confident,
+        )
+        issue_summary = {
+            "total_issues": len(main_issues_explained),
+            "high_severity_count": sum(
+                1
+                for item in main_issues_explained
+                if item.get("severity") == "High"
+            ),
+            "weak_section_count": len(top_weak_sections_explained),
+            "weak_alignment_count": len(alignment_weaknesses_explained),
+        }
+        recommended_fix_order = self.build_recommended_fix_order(
+            main_issues_explained
+        )
         processing_time = round(time.perf_counter() - start_time, 2)
 
         manuscript_score_breakdown = {
@@ -1115,8 +1343,12 @@ class AnalysisService:
             "major_detected_headings": major_detected_headings,
             "all_detected_headings": all_detected_headings,
             "main_issues": main_issues,
+            "main_issues_explained": main_issues_explained,
+            "issue_summary": issue_summary,
+            "recommended_fix_order": recommended_fix_order,
             "alignment_results": alignment_results,
             "raw_alignment_results": raw_alignment_results,
+            "alignment_weaknesses_explained": alignment_weaknesses_explained,
             "alignment_deduction": 0,
             "weak_alignment_count": sum(
                 1
@@ -1144,6 +1376,7 @@ class AnalysisService:
                 "evidence_display_rows"
             ],
             "top_weak_sections": top_weak_sections,
+            "top_weak_sections_explained": top_weak_sections_explained,
             "top_weak_alignment_pairs": top_weak_alignment_pairs,
             "overall_defense_notes": [
                 "Prepare clear explanations that connect objectives, methodology, results, and conclusion.",

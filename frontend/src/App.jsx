@@ -466,10 +466,17 @@ function ManuscriptDashboard({ result, prevResult }) {
   return (
     <>
       <ExecutiveSummary result={result} />
-      <MainIssuesPanel issues={result.main_issues} extractionWarnings={result.extraction_warnings} />
+      <MainIssuesPanel
+        issues={result.main_issues}
+        explainedIssues={result.main_issues_explained}
+        recommendedFixOrder={result.recommended_fix_order}
+        extractionWarnings={result.extraction_warnings}
+      />
       <HighlightsPanel
         topWeakSections={result.top_weak_sections}
+        topWeakSectionsExplained={result.top_weak_sections_explained}
         topWeakAlignmentPairs={result.top_weak_alignment_pairs}
+        alignmentWeaknessesExplained={result.alignment_weaknesses_explained}
       />
       <DetectedHeadingsPanel
         majorHeadings={result.major_detected_headings || result.detected_headings}
@@ -535,36 +542,88 @@ function ExecutiveSummary({ result }) {
   );
 }
 
-function MainIssuesPanel({ issues = [], extractionWarnings = [] }) {
+function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrder = [], extractionWarnings = [] }) {
   const allIssues = [
     ...(extractionWarnings || []).map((w) => ({ text: w, tone: "warn" })),
     ...(issues || []).map((w) => ({ text: w, tone: "warn" }))
   ];
-  if (!allIssues.length) return null;
+  if (!allIssues.length && !explainedIssues.length && !recommendedFixOrder.length) return null;
   return (
     <section className="panel">
       <h2 className="panel-title">Main Issues</h2>
-      <div className="issues-grid">
-        {allIssues.map((issue, i) => (
-          <div key={i} className={`issue-card issue-${issue.tone}`}>
-            <span className="issue-dot" />
-            <span>{issue.text}</span>
-          </div>
-        ))}
-      </div>
+      {explainedIssues.length ? (
+        <div className="issues-grid">
+          {explainedIssues.map((issue, i) => (
+            <div key={i} className={`issue-card issue-${riskBadgeTone(issue.severity)}`}>
+              <span className="issue-dot" />
+              <span>
+                <strong>{issue.title}</strong>
+                {issue.affected_sections?.length > 0 && (
+                  <div className="muted small">Affected: {issue.affected_sections.join(", ")}</div>
+                )}
+                <div className="muted small">{issue.reason}</div>
+                {issue.next_action && (
+                  <div className="muted small" style={{ marginTop: 4 }}>
+                    Fix: {issue.next_action}
+                  </div>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="issues-grid">
+          {allIssues.map((issue, i) => (
+            <div key={i} className={`issue-card issue-${issue.tone}`}>
+              <span className="issue-dot" />
+              <span>{issue.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {recommendedFixOrder.length > 0 && (
+        <>
+          <h3 className="subhead" style={{ marginTop: 12 }}>Recommended Fix Order</h3>
+          <ul className="bare-list">
+            {recommendedFixOrder.slice(0, 3).map((fix) => (
+              <li key={fix.priority}>
+                <strong>{fix.priority}. {fix.section || fix.issue_type}</strong>{" "}
+                {fix.fix}
+                {fix.why && <div className="muted small">{fix.why}</div>}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
     </section>
   );
 }
 
-function HighlightsPanel({ topWeakSections = [], topWeakAlignmentPairs = [] }) {
-  if (!topWeakSections.length && !topWeakAlignmentPairs.length) return null;
+function HighlightsPanel({ topWeakSections = [], topWeakSectionsExplained = [], topWeakAlignmentPairs = [], alignmentWeaknessesExplained = [] }) {
+  if (!topWeakSections.length && !topWeakSectionsExplained.length && !topWeakAlignmentPairs.length && !alignmentWeaknessesExplained.length) return null;
   return (
     <section className="panel">
       <h2 className="panel-title">Highlights</h2>
       <div className="grid-2">
         <div>
           <h3 className="subhead">Top Weak Sections</h3>
-          {topWeakSections.length ? (
+          {topWeakSectionsExplained.length ? (
+            <ul className="bare-list">
+              {topWeakSectionsExplained.map((s, i) => (
+                <li key={i}>
+                  <strong>{s.section}</strong>{" "}
+                  <Badge value={s.risk_level} tone={riskBadgeTone(s.risk_level)} />
+                  <div className="muted small">{s.reason}</div>
+                  {s.weak_criteria?.length > 0 && (
+                    <div className="muted small">Weak: {s.weak_criteria.join(", ")}</div>
+                  )}
+                  {s.next_action && (
+                    <div className="muted small">Fix: {s.next_action}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : topWeakSections.length ? (
             <ul className="bare-list">
               {topWeakSections.map((s, i) => (
                 <li key={i}>{s}</li>
@@ -576,7 +635,20 @@ function HighlightsPanel({ topWeakSections = [], topWeakAlignmentPairs = [] }) {
         </div>
         <div>
           <h3 className="subhead">Top Weak Alignment Pairs</h3>
-          {topWeakAlignmentPairs.length ? (
+          {alignmentWeaknessesExplained.length ? (
+            <ul className="bare-list">
+              {alignmentWeaknessesExplained.map((p, i) => (
+                <li key={i}>
+                  <strong>{p.section_pair}</strong>{" "}
+                  <Badge value={p.risk} tone={riskBadgeTone(p.risk)} />
+                  <div className="muted small">{p.reason}</div>
+                  {p.next_action && (
+                    <div className="muted small">Fix: {p.next_action}</div>
+                  )}
+                </li>
+              ))}
+            </ul>
+          ) : topWeakAlignmentPairs.length ? (
             <ul className="bare-list">
               {topWeakAlignmentPairs.map((p, i) => (
                 <li key={i}>{p}</li>

@@ -107,11 +107,29 @@ def generate_plain_language_diagnosis(
 
     if weak_areas:
         weak_text = ", ".join(weak_areas[:2])
+        section_lower = section_name.lower()
+        consequence = (
+            "This may make it harder to defend how the section supports the "
+            "study objectives, methods, or findings."
+        )
+        if section_name == "Conclusion":
+            consequence = (
+                "This means the conclusion may not clearly show how the study "
+                "findings answer the research objectives."
+            )
+        elif section_name == "Results and Discussion":
+            consequence = (
+                "This means the results may not clearly report the metrics, "
+                "error analysis, or objective-to-result links needed for defense."
+            )
+        elif section_name == "Methodology":
+            consequence = (
+                "This means the procedure may not be reproducible enough for "
+                "panel questions about data, model setup, or evaluation."
+            )
         return (
-            f"This {section_name.lower()} section is {readiness}. It contains "
-            f"some relevant content, but the system detected weak support for "
-            f"{weak_text}. Revise this section by adding clearer evidence before "
-            f"defense."
+            f"The {section_lower} section is {readiness} because the system "
+            f"detected weak support for {weak_text}. {consequence}"
         )
 
     if strong_areas:
@@ -166,29 +184,49 @@ SECTION_RECOMMENDATIONS = {
 
 
 CRITERION_FIX_GUIDANCE = {
-    "Research Purpose": "State the study purpose in one direct sentence.",
-    "Method Summary": "Briefly summarize the method or development process used.",
-    "Key Results Summary": "Add the most important measured result or finding.",
-    "Problem Context": "Explain the problem context before introducing the solution.",
-    "Research Gap": "State what previous studies or current systems do not address.",
-    "Study Purpose": "Add a clear statement of what the study aims to accomplish.",
-    "Objectives Mention": "Make the objectives or study aims explicit.",
-    "Related Studies Coverage": "Add more relevant studies and explain their findings.",
-    "Comparison of Existing Systems": "Compare systems by method, features, performance, and limitations.",
-    "Research Gap Synthesis": "Synthesize the gap across studies instead of listing sources only.",
-    "Dataset Description": "State dataset source, size, classes, split, and distribution.",
-    "Participant or Sample Description": "State sample size, selection criteria, and sampling method.",
-    "Data Collection Procedure": "Describe how data was gathered, recorded, and validated.",
-    "Preprocessing Description": "Explain cleaning, normalization, augmentation, encoding, or preparation steps.",
-    "Model or Algorithm Description": "Describe the model, algorithm, architecture, or system logic.",
-    "Evaluation Metrics": "State the metrics and why they match the objectives.",
-    "Confusion Matrix or Error Analysis": "Explain errors, misclassifications, and weak cases.",
-    "Latency or Response Time Results": "Report measured response time or processing delay.",
-    "Usability Evaluation Results": "Summarize usability testing, ratings, tasks, or user feedback.",
-    "Objective-to-Result Connection": "Link each result back to a specific objective.",
+    "Research Purpose": "In this section, state the study purpose in one direct sentence and connect it to the problem being evaluated.",
+    "Method Summary": "Briefly name the method, model, or development process so the reader can see how the study was carried out.",
+    "Key Results Summary": "Add the main measured result or finding; if no value is available, add a metric, table reference, or finding that supports this point.",
+    "Problem Context": "Explain the real-world problem before introducing the proposed system or study solution.",
+    "Research Gap": "State what previous studies, current systems, or existing practice still do not address.",
+    "Study Purpose": "Add a clear sentence explaining what the study aims to accomplish and why that aim follows from the gap.",
+    "Objectives Mention": "List or reference the study objectives so the reader can trace them to methods and results.",
+    "Related Studies Coverage": "Add relevant studies and explain what each contributes to the current study context.",
+    "Comparison of Existing Systems": "Compare existing systems by method, feature, performance, and limitation rather than only listing them.",
+    "Research Gap Synthesis": "Summarize the shared gap across reviewed studies and explain how the current study responds to it.",
+    "Dataset Description": "State the dataset source, size, classes, split, and distribution used for this section's claims.",
+    "Participant or Sample Description": "State sample size, selection criteria, and sampling method so the panel can judge representativeness.",
+    "Data Collection Procedure": "Describe how data was gathered, recorded, labeled, and validated.",
+    "Preprocessing Description": "Explain cleaning, normalization, augmentation, encoding, or preparation steps before model or system use.",
+    "Model or Algorithm Description": "Describe the model, algorithm, architecture, or system logic clearly enough to reproduce the work.",
+    "Evaluation Metrics": "State the metric, table reference, or finding that shows how the objective was evaluated.",
+    "Model Evaluation Metrics": "Report accuracy, precision, recall, F1-score, or another metric tied to the objective.",
+    "Confusion Matrix or Error Analysis": "Add a confusion matrix, error table, or explanation of misclassified cases.",
+    "Latency or Response Time Results": "Report measured response time, device conditions, and number of test runs.",
+    "Usability Evaluation Results": "Summarize user tasks, ratings, respondents, or usability table results.",
+    "Objective-to-Result Connection": "Add an objective-to-result mapping table or paragraph showing which result answers each objective.",
+    "Summary of Main Findings": "Summarize the main findings using specific results from the study; if values are unavailable, reference the finding or table that supports the summary.",
+    "Objective Support": "Add one sentence for each study objective explaining which result, table, or finding supports the conclusion.",
+    "Results-Based Claims": "Tie each claim to a reported result, metric, table, or observed finding.",
     "Limitations": "State the study limits, constraints, and conditions where results may not apply.",
-    "Avoidance of Overclaims": "Revise claims so they stay within the actual evidence.",
+    "Avoidance of Overclaims": "Revise broad claims so they match the measured results and study scope.",
+    "Recommendations": "Base recommendations on specific findings, limitations, or observed results.",
+    "Future Work": "Name concrete next work, such as more data, more users, broader testing, or improved evaluation.",
 }
+
+
+def criterion_fix_guidance(area: str, section_name: str) -> str:
+    """Return specific guidance grounded in section and criterion."""
+    guidance = CRITERION_FIX_GUIDANCE.get(
+        area,
+        (
+            f"In the {section_name} section, add a metric, table reference, "
+            f"or finding that supports {area.lower()}."
+        ),
+    )
+    if section_name and section_name not in guidance:
+        return f"For {section_name}, {guidance[0].lower()}{guidance[1:]}"
+    return guidance
 
 
 def _weak_and_moderate_items(evidence_coverage: list[dict[str, object]]) -> list[dict[str, object]]:
@@ -207,30 +245,41 @@ def generate_priority_fixes(
     """Generate section-specific priority fixes from expected criteria."""
     fixes = []
     expected = set(score_result.get("criteria_used", get_section_specific_criteria(predicted_section).keys()))
+    weak_items = [
+        item
+        for item in _weak_and_moderate_items(evidence_coverage)
+        if str(item["Evidence Area"]) in expected
+    ]
     if score_result.get("risk_level") == "High":
+        first_area = str(weak_items[0]["Evidence Area"]) if weak_items else None
         fixes.append(
             {
                 "Priority": "High",
-                "Issue": "Section needs targeted revision before defense.",
-                "Why It Matters": "Weak expected criteria may lead to adviser or panel questions.",
-                "Suggested Fix": "Address the weakest section-specific criteria first.",
+                "Issue": f"{predicted_section} needs targeted revision before defense.",
+                "Why It Matters": (
+                    f"The system detected weak expected criteria in {predicted_section}, "
+                    "which may lead to adviser or panel questions."
+                ),
+                "Suggested Fix": (
+                    criterion_fix_guidance(first_area, predicted_section)
+                    if first_area
+                    else f"Review {predicted_section} and add a metric, table reference, or finding that supports its main claim."
+                ),
             }
         )
 
-    for item in _weak_and_moderate_items(evidence_coverage):
+    for item in weak_items:
         area = str(item["Evidence Area"])
-        if area not in expected:
-            continue
         level = str(item["Coverage Level"])
         fixes.append(
             {
                 "Priority": "High" if level == "Weak" else "Medium",
-                "Issue": f"{level} support for {area}",
-                "Why It Matters": f"{area} is expected in the {predicted_section} section.",
-                "Suggested Fix": CRITERION_FIX_GUIDANCE.get(
-                    area,
-                    f"Add clearer evidence for {area.lower()}.",
+                "Issue": f"{predicted_section}: {level} support for {area}",
+                "Why It Matters": (
+                    f"{area} is expected in {predicted_section}; weak support can "
+                    "make the section harder to defend."
                 ),
+                "Suggested Fix": criterion_fix_guidance(area, predicted_section),
             }
         )
     return fixes[:6]
@@ -254,7 +303,11 @@ def generate_revision_suggestions(
         if item.get("Coverage Level") == "Weak"
     ][:3]
     if weak:
-        suggestions.append("Prioritize weak criteria: " + ", ".join(weak) + ".")
+        first = weak[0]
+        suggestions.append(
+            f"Prioritize {first} in {predicted_section}: "
+            f"{criterion_fix_guidance(first, predicted_section)}"
+        )
     return suggestions[:4]
 
 
@@ -288,7 +341,10 @@ def generate_section_recommendation(
         )
     )
     if weak_areas:
-        recommendations.append("Focus first on: " + ", ".join(weak_areas[:3]) + ".")
+        first = weak_areas[0]
+        recommendations.append(
+            f"Focus first on {first}: {criterion_fix_guidance(first, section_name)}"
+        )
     return recommendations[:2]
 
 
@@ -304,7 +360,10 @@ def generate_next_best_action(section_name: str, weak_areas: list[str]) -> str:
         "Limitations": "Clearly state the scope boundaries and under what conditions the system might fail.",
         "Conclusion": "Connect each conclusion to a specific finding and soften unsupported claims.",
     }
-    return actions.get(section_name, "Review the weak areas and add clear evidence to support your claims.")
+    if weak_areas:
+        first = weak_areas[0]
+        return criterion_fix_guidance(first, section_name)
+    return actions.get(section_name, "Review the weak areas and add a metric, table reference, or finding that supports the section's main claim.")
 
 
 def generate_panel_risk(section_name: str, weak_areas: list[str]) -> str:
@@ -380,6 +439,8 @@ def generate_suggested_revision_wording(weak_areas: list[str]) -> list[str]:
         if area in templates:
             suggestions.append(templates[area])
         else:
-            suggestions.append(f"Add clear evidence or measurable data for {area.lower()}.")
+            suggestions.append(
+                f"Add a metric, table reference, or finding that supports {area.lower()}."
+            )
             
     return suggestions[:3]

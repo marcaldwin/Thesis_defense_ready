@@ -264,9 +264,77 @@ def generate_pdf_report(
 
         _add_heading(story, "3. Weak Areas and Preparation Notes", styles)
         story.append(_paragraph("Top Weak Sections", styles["heading"]))
-        _add_bullet_list(story, list(result.get("top_weak_sections", [])), styles)
+        explained_weak_sections = list(result.get("top_weak_sections_explained", []))
+        if explained_weak_sections:
+            _add_table(
+                story,
+                [
+                    "section",
+                    "score",
+                    "risk_level",
+                    "weak_criteria",
+                    "reason",
+                    "next_action",
+                ],
+                explained_weak_sections,
+                styles,
+                [
+                    0.9 * inch,
+                    0.45 * inch,
+                    0.6 * inch,
+                    1.25 * inch,
+                    1.75 * inch,
+                    1.55 * inch,
+                ],
+            )
+        else:
+            _add_bullet_list(story, list(result.get("top_weak_sections", [])), styles)
+        story.append(_paragraph("Main Issues", styles["heading"]))
+        explained_issues = list(result.get("main_issues_explained", []))
+        if explained_issues:
+            _add_table(
+                story,
+                [
+                    "issue_type",
+                    "title",
+                    "affected_sections",
+                    "severity",
+                    "reason",
+                    "next_action",
+                ],
+                explained_issues,
+                styles,
+                [
+                    0.85 * inch,
+                    1.05 * inch,
+                    1.05 * inch,
+                    0.55 * inch,
+                    1.65 * inch,
+                    1.4 * inch,
+                ],
+            )
+        else:
+            _add_bullet_list(story, list(result.get("main_issues", [])), styles)
         story.append(_paragraph("Top Weak Alignment Pairs", styles["heading"]))
-        _add_bullet_list(story, list(result.get("top_weak_alignment_pairs", [])), styles)
+        explained_alignments = list(result.get("alignment_weaknesses_explained", []))
+        if explained_alignments:
+            _add_table(
+                story,
+                ["section_pair", "similarity", "risk", "reason", "next_action"],
+                explained_alignments,
+                styles,
+                [1.3 * inch, 0.55 * inch, 0.5 * inch, 2.0 * inch, 2.15 * inch],
+            )
+        else:
+            _add_bullet_list(story, list(result.get("top_weak_alignment_pairs", [])), styles)
+        story.append(_paragraph("Recommended Fix Order", styles["heading"]))
+        _add_table(
+            story,
+            ["priority", "section", "fix", "why"],
+            list(result.get("recommended_fix_order", [])),
+            styles,
+            [0.5 * inch, 1.0 * inch, 2.3 * inch, 2.7 * inch],
+        )
         story.append(_paragraph("Recommended Overall Defense Preparation Notes", styles["heading"]))
         _add_bullet_list(story, list(result.get("overall_defense_notes", [])), styles)
 
