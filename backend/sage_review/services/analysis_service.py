@@ -212,6 +212,197 @@ class AnalysisService:
             ),
         }
 
+    def build_section_score_explainability(
+        self,
+        section_name: str,
+        evidence_coverage: list[dict[str, Any]],
+        score_result: dict[str, Any],
+        classification_confidence: float,
+        word_count: int,
+        priority_fixes: list[dict[str, Any]],
+    ) -> dict[str, Any]:
+        """Expose score inputs and practical reasons without changing scoring."""
+        raw_breakdown = dict(score_result.get("score_breakdown", {}))
+        final_score = float(score_result.get("defense_score", 0.0))
+        average_similarity = float(raw_breakdown.get("average_similarity", 0.0))
+        weak_items = sorted(
+            (
+                item
+                for item in evidence_coverage
+                if item.get("Coverage Level") == "Weak"
+            ),
+            key=lambda item: float(item.get("Similarity Score", 0.0)),
+        )
+        weak_count = len(weak_items)
+        total_count = max(len(evidence_coverage), 1)
+
+        threshold_by_section = {
+            "Abstract": 100,
+            "Introduction": 300,
+            "Objectives of the Study": 100,
+            "Literature Review": 400,
+            "Methodology": 300,
+            "Results and Discussion": 300,
+            "Conclusion": 150,
+            "Limitations": 100,
+        }
+        word_threshold = threshold_by_section.get(section_name, 150)
+        completeness_score = min((word_count / word_threshold) * 100, 100.0)
+        evidence_score = round(average_similarity * 100, 2)
+
+        score_breakdown = {
+            **raw_breakdown,
+            "evidence_coverage_score": evidence_score,
+            "alignment_score": None,
+            "section_completeness_score": round(completeness_score, 2),
+            "weak_evidence_penalty": raw_breakdown.get("risk_deduction", 0.0),
+            "extraction_confidence": round(classification_confidence * 100, 2),
+            "final_score": final_score,
+        }
+
+        score_reasons = []
+        for item in weak_items[:3]:
+            area = str(item.get("Evidence Area", "Unknown criterion"))
+            metric = round(float(item.get("Similarity Score", 0.0)), 4)
+            score_reasons.append(
+                {
+                    "affected_section": section_name,
+                    "issue": f"Weak evidence coverage for {area}.",
+                    "metric": f"similarity_score={metric}",
+                    "evidence": item.get("Interpretation", ""),
+                    "next_action": (
+                        f"Add clearer section-specific evidence for {area.lower()}."
+                    ),
+                }
+            )
+
+        if completeness_score < 100:
+            score_reasons.append(
+                {
+                    "affected_section": section_name,
+                    "issue": "The section appears short for this thesis section type.",
+                    "metric": f"word_count={word_count}, expected_minimum={word_threshold}",
+                    "evidence": "Short sections may not contain enough detail for defense readiness.",
+                    "next_action": "Expand the section with concrete methods, findings, or support.",
+                }
+            )
+
+        priority_actions = [
+            str(fix.get("Suggested Fix") or fix.get("Issue") or fix)
+            for fix in priority_fixes
+        ][:3]
+        while len(priority_actions) < 3 and len(score_reasons) > len(priority_actions):
+            priority_actions.append(str(score_reasons[len(priority_actions)]["next_action"]))
+
+        score_explanation = (
+            f"The final score is {final_score:.2f}/100. It uses the existing "
+            f"section formula: base score plus evidence points and available "
+            f"coverage bonuses, minus the existing weak-evidence penalty. "
+            f"For {section_name}, evidence coverage is {evidence_score:.2f}/100 "
+            f"with {weak_count} weak criteria out of {total_count} checked criteria."
+        )
+
+        return {
+            "score_breakdown": score_breakdown,
+            "score_explanation": score_explanation,
+            "score_reasons": score_reasons[:5],
+            "priority_actions": priority_actions[:3],
+        }
+
+    def build_manuscript_score_explainability(
+        self,
+        section_details: list[dict[str, Any]],
+        section_results: list[dict[str, Any]],
+        score_breakdown: dict[str, Any],
+        overall_score: float,
+        analysis_confidence: str,
+        missing_major_sections: list[str],
+        top_weak_alignment_pairs: list[str],
+    ) -> dict[str, Any]:
+        """Explain the existing full-manuscript weighted score."""
+        weak_sections = sorted(
+            section_results,
+            key=lambda item: float(item.get("Defense Score", 0.0)),
+        )
+        weakest_sections = weak_sections[:3]
+        weak_evidence_penalty = sum(
+            float(
+                section.get("score_breakdown", {}).get(
+                    "weak_evidence_penalty",
+                    section.get("score_breakdown", {}).get("risk_deduction", 0.0),
+                )
+            )
+            for section in section_details
+        )
+
+        expanded_breakdown = {
+            **score_breakdown,
+            "evidence_coverage_score": score_breakdown.get("evidence_coverage_score"),
+            "alignment_score": score_breakdown.get("semantic_alignment_score"),
+            "section_completeness_score": score_breakdown.get("completeness_score"),
+            "weak_evidence_penalty": round(weak_evidence_penalty, 2),
+            "extraction_confidence": score_breakdown.get("classification_score"),
+            "final_score": overall_score,
+        }
+
+        score_reasons: list[dict[str, Any]] = []
+        for section in weakest_sections:
+            section_name = str(section.get("Section Name", "Unknown"))
+            score_reasons.append(
+                {
+                    "affected_section": section_name,
+                    "issue": "This is one of the lowest-scoring extracted sections.",
+                    "metric": f"defense_score={section.get('Defense Score')}",
+                    "evidence": f"Top weak areas: {section.get('Top Weak Areas', '')}",
+                    "next_action": (
+                        "Revise the weakest section-specific criteria in this section first."
+                    ),
+                }
+            )
+
+        for section_name in missing_major_sections[:3]:
+            score_reasons.append(
+                {
+                    "affected_section": section_name,
+                    "issue": "Required thesis section was not confidently extracted.",
+                    "metric": "section_extraction=missing",
+                    "evidence": "Missing or unclear headings reduce manuscript-level confidence.",
+                    "next_action": "Add or clarify the section heading and required content.",
+                }
+            )
+
+        for pair in top_weak_alignment_pairs[:2]:
+            score_reasons.append(
+                {
+                    "affected_section": pair,
+                    "issue": "Weak semantic alignment between thesis sections.",
+                    "metric": "alignment_level=weak",
+                    "evidence": pair,
+                    "next_action": (
+                        "Add linking statements that connect objectives, methods, results, and conclusions."
+                    ),
+                }
+            )
+
+        priority_actions = [
+            str(reason["next_action"])
+            for reason in score_reasons
+        ][:3]
+
+        score_explanation = (
+            f"The final manuscript score is {overall_score:.2f}/100. It uses the "
+            "existing weighted formula: section extraction, section classification "
+            "confidence, evidence coverage, semantic alignment, and completeness. "
+            f"The current analysis confidence is {analysis_confidence}."
+        )
+
+        return {
+            "score_breakdown": expanded_breakdown,
+            "score_explanation": score_explanation,
+            "score_reasons": score_reasons[:6],
+            "priority_actions": priority_actions,
+        }
+
     def analyze_api_section(
         self,
         text: str,
@@ -307,6 +498,14 @@ class AnalysisService:
 
         section_score = float(score_result["defense_score"])
         section_risk = str(score_result["risk_level"])
+        score_explainability = self.build_section_score_explainability(
+            canonical_section,
+            evidence_coverage,
+            score_result,
+            float(classification["confidence"]),
+            len(clean_text.split()),
+            priority_fixes,
+        )
         gemini_feedback = generate_gemini_feedback(
             section_name=canonical_section,
             section_text=analysis_text,
@@ -380,6 +579,7 @@ class AnalysisService:
             ),
             "expected_areas": expected_areas,
             "expected_items": score_result["expected_items"],
+            "avg_expected_similarity": score_result["avg_expected_similarity"],
             "strong_areas": strong_areas,
             "needs_improvement_areas": needs_improvement_areas,
             "plain_language_diagnosis": generate_plain_language_diagnosis(
@@ -392,7 +592,10 @@ class AnalysisService:
             "section_recommendations": section_recommendations,
             "strengths": score_result["strengths"],
             "deductions": score_result["deductions"],
-            "score_breakdown": score_result["score_breakdown"],
+            "score_breakdown": score_explainability["score_breakdown"],
+            "score_explanation": score_explainability["score_explanation"],
+            "score_reasons": score_explainability["score_reasons"],
+            "priority_actions": score_explainability["priority_actions"],
             "priority_fixes": priority_fixes,
             "revision_suggestions": revision_suggestions,
             "safer_wording_suggestions": safer_wording,
@@ -589,6 +792,23 @@ class AnalysisService:
         ][:5]
         processing_time = round(time.perf_counter() - start_time, 2)
 
+        manuscript_score_breakdown = {
+            "section_extraction_score": round(section_extraction_score, 2),
+            "classification_score": round(classification_score, 2),
+            "evidence_coverage_score": round(evidence_coverage_score, 2),
+            "semantic_alignment_score": round(semantic_alignment_score, 2),
+            "completeness_score": round(completeness_score, 2),
+        }
+        manuscript_score_explainability = self.build_manuscript_score_explainability(
+            section_details,
+            section_results,
+            manuscript_score_breakdown,
+            overall_score,
+            analysis_confidence,
+            missing_major_sections,
+            top_weak_alignment_pairs,
+        )
+
         avg_sim_total = 0.0
         scores_to_print = []
         if len(section_details) > 0:
@@ -690,13 +910,10 @@ class AnalysisService:
             "readiness_score": overall_score,
             "total_word_count": word_count,
             "processing_time": processing_time,
-            "score_breakdown": {
-                "section_extraction_score": round(section_extraction_score, 2),
-                "classification_score": round(classification_score, 2),
-                "evidence_coverage_score": round(evidence_coverage_score, 2),
-                "semantic_alignment_score": round(semantic_alignment_score, 2),
-                "completeness_score": round(completeness_score, 2),
-            },
+            "score_breakdown": manuscript_score_explainability["score_breakdown"],
+            "score_explanation": manuscript_score_explainability["score_explanation"],
+            "score_reasons": manuscript_score_explainability["score_reasons"],
+            "priority_actions": manuscript_score_explainability["priority_actions"],
             "extracted_section_stats": {
                 k: {
                     "found": True,

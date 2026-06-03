@@ -57,6 +57,10 @@ class AnalysisResponse(BaseModel):
     evidence_coverage: list[Any] = Field(default_factory=list)
     alignment_matrix: list[Any] = Field(default_factory=list)
     sections: list[Any] = Field(default_factory=list)
+    score_breakdown: dict[str, Any] = Field(default_factory=dict)
+    score_explanation: str | None = None
+    score_reasons: list[Any] = Field(default_factory=list)
+    priority_actions: list[Any] = Field(default_factory=list)
     report: ReportInfo | None = None
     report_filename: str | None = None
 
