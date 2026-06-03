@@ -4,7 +4,7 @@ STRONG_THRESHOLD = 0.65
 MODERATE_THRESHOLD = 0.45
 
 
-SECTION_CRITERIA = {
+SECTION_RUBRICS = {
     "Abstract": {
         "Research Purpose": "The abstract clearly states the main purpose or problem addressed by the study.",
         "Method Summary": "The abstract briefly summarizes the method, research approach, or development process used.",
@@ -78,6 +78,9 @@ SECTION_CRITERIA = {
     }
 }
 
+# Backward-compatible alias for existing imports/calls.
+SECTION_CRITERIA = SECTION_RUBRICS
+
 
 SECTION_ALIASES = {
     "Unknown / Mixed Section": "Methodology",
@@ -113,7 +116,12 @@ def normalize_section_name(section_name: str) -> str:
 def get_section_specific_criteria(section_name: str) -> dict[str, str]:
     """Return natural-language criteria for the given thesis section."""
     normalized = normalize_section_name(section_name)
-    return SECTION_CRITERIA.get(normalized, SECTION_CRITERIA["Unknown"])
+    return SECTION_RUBRICS.get(normalized, SECTION_RUBRICS["Unknown"])
+
+
+def get_section_rubric(section_name: str) -> dict[str, str]:
+    """Return the centralized section rubric for a thesis section."""
+    return get_section_specific_criteria(section_name)
 
 
 def classify_coverage_level(similarity_score: float) -> str:

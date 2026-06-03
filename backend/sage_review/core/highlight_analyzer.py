@@ -31,6 +31,45 @@ NEEDS_SUPPORT_WORDS = {
     "therefore", "as a result"
 }
 
+DATA_HANDLING_WORDS = {
+    "confidentiality", "confidential", "rename", "renamed", "coded",
+    "participant code", "without using real names", "identity", "anonymized",
+    "anonymous", "privacy"
+}
+
+CONFIDENTIALITY_GUARANTEE_WORDS = {
+    "guarantees anonymity", "fully protects identity", "completely secure",
+    "impossible to identify", "100% confidential"
+}
+
+CITATION_PATTERNS = [
+    r"\([A-Z][A-Za-z-]+(?:\s+et\s+al\.)?,\s*\d{4}\)",
+    r"\bet al\.\b",
+    r"\baccording to\b",
+    r"\bas stated by\b",
+    r"\bcited by\b",
+    r"\bbased on\b.{0,60}\b(study|studies|source|literature)\b",
+]
+
+SOFTENING_WORDS = {
+    "may", "can", "might", "within the scope", "based on the results",
+    "observed", "suggests", "suggest", "indicates", "indicate", "appears",
+    "was observed", "were observed"
+}
+
+RESULT_CLAIM_WORDS = {
+    "recognized", "recognised", "confused", "classified", "detected",
+    "performed", "consistent", "consistently", "results showed",
+    "results indicate", "findings show"
+}
+
+STRONG_UNSUPPORTED_WORDS = {
+    "proves", "guarantees", "guaranteed", "always", "completely solves",
+    "fully eliminates", "highly accurate", "reliable for all users",
+    "works in all real-world conditions", "100% accurate", "no errors",
+    "fully solves", "universal", "perfectly"
+}
+
 
 def _split_into_sentences(text: str) -> list[str]:
     """Split text into sentences safely by punctuation and paragraphs."""
@@ -78,45 +117,140 @@ def _contains_measurable_evidence(text: str) -> bool:
     return False
 
 
+def _has_citation_evidence(text: str) -> bool:
+    """Detect common citation signals in academic claims."""
+    return any(re.search(pattern, text, flags=re.I) for pattern in CITATION_PATTERNS)
+
+
+def _build_highlight(
+    claim_category: str,
+    severity: str,
+    sentence: str,
+    reason: str,
+    suggested_revision: str,
+) -> dict[str, str]:
+    """Build a frontend-compatible highlight with an explicit category."""
+    highlight_type = (
+        "Overclaim Risk"
+        if claim_category == "Strong Unsupported Overclaim"
+        else claim_category
+    )
+    return {
+        "highlight_type": highlight_type,
+        "claim_category": claim_category,
+        "category": claim_category,
+        "severity": severity,
+        "risk_level": severity,
+        "text": sentence,
+        "quoted_sentence": sentence,
+        "reason": reason,
+        "why_flagged": reason,
+        "suggested_revision": suggested_revision,
+        "suggested_action": suggested_revision,
+    }
+
+
+def classify_claim(sentence: str) -> dict[str, str] | None:
+    """Classify a highlighted sentence before assigning overclaim risk."""
+    lower_sentence = sentence.lower()
+    has_metric = _contains_measurable_evidence(sentence)
+    has_citation = _has_citation_evidence(sentence)
+    has_softening = _contains_words(sentence, SOFTENING_WORDS)
+    has_strong_overclaim = _contains_words(sentence, STRONG_UNSUPPORTED_WORDS)
+    has_data_handling = _contains_words(sentence, DATA_HANDLING_WORDS)
+
+    if has_data_handling:
+        if _contains_words(sentence, CONFIDENTIALITY_GUARANTEE_WORDS):
+            return _build_highlight(
+                "Strong Unsupported Overclaim",
+                "High",
+                sentence,
+                "This data-handling statement uses absolute privacy or anonymity language that needs strong proof.",
+                "Describe the actual confidentiality procedure without guaranteeing anonymity or perfect security.",
+            )
+        return _build_highlight(
+            "Data Handling Statement",
+            "Low",
+            sentence,
+            "This describes a data handling or confidentiality procedure, not a strong empirical overclaim.",
+            "Keep the procedure factual and avoid absolute privacy guarantees.",
+        )
+
+    if has_citation:
+        return _build_highlight(
+            "Citation-Supported Claim",
+            "Low",
+            sentence,
+            "This claim includes citation evidence, so it should not be treated as a high unsupported overclaim.",
+            "Keep the citation and make sure the reference actually supports the statement.",
+        )
+
+    if has_softening and not has_strong_overclaim:
+        return _build_highlight(
+            "Limitation Statement",
+            "Low",
+            sentence,
+            "This statement uses cautious wording that limits the claim scope.",
+            "Keep the cautious wording and connect it to the relevant result or limitation.",
+        )
+
+    if has_strong_overclaim:
+        return _build_highlight(
+            "Strong Unsupported Overclaim",
+            "High",
+            sentence,
+            "This statement makes a strong unsupported empirical, performance, generalization, reliability, or guarantee claim.",
+            "Use scoped wording and add measurable evidence, such as a metric, table, sample size, or test condition.",
+        )
+
+    if _contains_words(sentence, RESULT_CLAIM_WORDS) and not has_metric:
+        return _build_highlight(
+            "Result Claim Needing Metric",
+            "Medium",
+            sentence,
+            "This result interpretation needs measurable support before it can be defended confidently.",
+            "Add measurable support, such as accuracy, confusion matrix reference, table number, or number of test cases.",
+        )
+
+    if _contains_words(sentence, NEEDS_SUPPORT_WORDS) and not has_metric:
+        return _build_highlight(
+            "Vague Evidence",
+            "Medium",
+            sentence,
+            "The claim needs a clearer connection to specific findings or evidence.",
+            "Connect this claim to a specific result, table, metric, or observed finding.",
+        )
+
+    if _contains_words(sentence, VAGUE_EVIDENCE_WORDS) and not has_metric:
+        return _build_highlight(
+            "Vague Evidence",
+            "Medium",
+            sentence,
+            "This statement is related to performance or quality but does not provide measurable evidence.",
+            "Add a measurable value or reference to a result table, such as a metric, score, number of trials, or table number.",
+        )
+
+    if "real-time" in lower_sentence and not has_metric:
+        return _build_highlight(
+            "Methodology Statement",
+            "Medium",
+            sentence,
+            "Real-time behavior should be supported with timing or deployment evidence.",
+            "Add measured latency, response time, device conditions, or a table reference.",
+        )
+
+    return None
+
+
 def analyze_contextual_highlights(section_name: str, section_text: str, weak_areas: list[str] = None) -> dict:
     """Detect overclaims, vague evidence, and unsupported claims in a section."""
     sentences = _split_into_sentences(section_text)
     highlights = []
     
     for sentence in sentences:
-        # 1. Overclaim Risk
-        if _contains_words(sentence, OVERCLAIM_WORDS):
-            highlights.append({
-                "highlight_type": "Overclaim Risk",
-                "severity": "High",
-                "text": sentence,
-                "reason": "This statement may overclaim because it makes a strong claim without showing measurable evidence or scope limitations.",
-                "suggested_revision": "Use safe wording: \"Within the scope of this study, [claim] was observed based on [evidence/metric].\""
-            })
-            continue # Prioritize highest severity
-            
-        # 2. Needs Support Detection
-        if _contains_words(sentence, NEEDS_SUPPORT_WORDS):
-            if not _contains_measurable_evidence(sentence):
-                highlights.append({
-                    "highlight_type": "Needs Support",
-                    "severity": "Medium",
-                    "text": sentence,
-                    "reason": "The claim may need clearer connection to specific findings or evidence.",
-                    "suggested_revision": "Connect this claim to a specific result, table, metric, or observed finding."
-                })
-                continue
-                
-        # 3. Vague Evidence Detection
-        if _contains_words(sentence, VAGUE_EVIDENCE_WORDS):
-            if not _contains_measurable_evidence(sentence):
-                highlights.append({
-                    "highlight_type": "Vague Evidence",
-                    "severity": "Medium",
-                    "text": sentence,
-                    "reason": "This statement is related to performance or quality but does not provide measurable evidence.",
-                    "suggested_revision": "Add a measurable value or reference to a result table, such as [metric], [score], [number of trials], or [table number]."
-                })
+        highlight = classify_claim(sentence)
+        if highlight is not None:
+            highlights.append(highlight)
                 
     # Sort highlights by severity (High first)
     severity_order = {"High": 0, "Medium": 1, "Low": 2}
