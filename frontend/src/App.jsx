@@ -10,7 +10,7 @@ import {
   YAxis
 } from "recharts";
 
-const API_BASE_URL = "http://127.0.0.1:8000";
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 const TABS = [
   { id: "section", label: "Analyze Section" },
@@ -35,6 +35,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const prevResultRef = useRef(null);
+  const activeRequestRef = useRef(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -54,7 +55,12 @@ export default function App() {
     };
   }, []);
 
-  function clearOutput() {
+  function clearOutput(cancelActiveRequest = true) {
+    if (cancelActiveRequest && activeRequestRef.current) {
+      activeRequestRef.current.abort();
+      activeRequestRef.current = null;
+      setLoading(false);
+    }
     if (result) {
       prevResultRef.current = result;
     }
@@ -63,39 +69,53 @@ export default function App() {
   }
 
   async function callJson(path, body) {
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
     setLoading(true);
-    clearOutput();
+    clearOutput(false);
     try {
       const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
+        signal: controller.signal
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Request failed (${res.status}).`);
       setResult(data);
     } catch (err) {
-      setError(err.message || "Request failed.");
+      if (err.name !== "AbortError") setError(err.message || "Request failed.");
     } finally {
-      setLoading(false);
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+        setLoading(false);
+      }
     }
   }
 
   async function callForm(path, formData) {
+    activeRequestRef.current?.abort();
+    const controller = new AbortController();
+    activeRequestRef.current = controller;
     setLoading(true);
-    clearOutput();
+    clearOutput(false);
     try {
       const res = await fetch(`${API_BASE_URL}${path}`, {
         method: "POST",
-        body: formData
+        body: formData,
+        signal: controller.signal
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data.detail || `Request failed (${res.status}).`);
       setResult(data);
     } catch (err) {
-      setError(err.message || "Request failed.");
+      if (err.name !== "AbortError") setError(err.message || "Request failed.");
     } finally {
-      setLoading(false);
+      if (activeRequestRef.current === controller) {
+        activeRequestRef.current = null;
+        setLoading(false);
+      }
     }
   }
 
@@ -201,7 +221,7 @@ export default function App() {
             coverage, defense readiness scoring, and revision review.
           </p>
         </div>
-        <div className={`status status-${backendStatus}`}>
+        <div className={`status status-${backendStatus}`} role="status" aria-live="polite">
           <span className="status-dot" />
           {backendStatus === "online" && "Backend Online"}
           {backendStatus === "offline" && "Backend Offline"}
@@ -209,11 +229,14 @@ export default function App() {
         </div>
       </header>
 
-      <nav className="tabs">
+      <nav className="tabs" role="tablist" aria-label="Analysis modes">
         {TABS.map((tab) => (
           <button
             key={tab.id}
             type="button"
+            role="tab"
+            aria-selected={activeTab === tab.id}
+            aria-controls="analysis-panel"
             className={`tab ${activeTab === tab.id ? "tab-active" : ""}`}
             onClick={() => handleTabChange(tab.id)}
           >
@@ -222,7 +245,7 @@ export default function App() {
         ))}
       </nav>
 
-      <section className="panel">
+      <section id="analysis-panel" className="panel" role="tabpanel">
         {activeTab === "section" && (
           <Form title="Analyze a Single Thesis Section">
             <Field label="Thesis section text">
@@ -254,7 +277,7 @@ export default function App() {
           <Form title="Analyze a Full Manuscript">
             <Field label="Full manuscript text">
               <textarea
-                rows={16}
+                rows={12}
                 value={manuscriptText}
                 onChange={(e) => updateManuscriptText(e.target.value)}
                 placeholder="Paste the full thesis manuscript here..."
@@ -328,7 +351,7 @@ export default function App() {
         )}
       </section>
 
-      {error && <div className="alert alert-error">{error}</div>}
+      {error && <div className="alert alert-error" role="alert">{error}</div>}
 
       {result && activeTab === "manuscript" && <ManuscriptDashboard result={result} prevResult={prevResultRef.current} />}
       {result && activeTab === "section" && <SectionResultPanel result={result} prevResult={prevResultRef.current} />}
@@ -403,8 +426,8 @@ function riskBadgeTone(value) {
 
 function confidenceBadgeTone(value) {
   const v = String(value || "").toLowerCase();
-  if (v === "complete") return "ok";
-  if (v === "partial") return "warn";
+  if (v === "complete" || v === "high") return "ok";
+  if (v === "partial" || v === "moderate") return "warn";
   if (v === "low") return "danger";
   return "muted";
 }
@@ -551,7 +574,17 @@ function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrde
   return (
     <section className="panel">
       <h2 className="panel-title">Main Issues</h2>
-      {explainedIssues.length ? (
+      {allIssues.length > 0 && (
+        <div className="issues-grid">
+          {allIssues.map((issue, i) => (
+            <div key={i} className={`issue-card issue-${issue.tone}`}>
+              <span className="issue-dot" />
+              <span>{issue.text}</span>
+            </div>
+          ))}
+        </div>
+      )}
+      {explainedIssues.length > 0 && (
         <div className="issues-grid">
           {explainedIssues.map((issue, i) => (
             <div key={i} className={`issue-card issue-${riskBadgeTone(issue.severity)}`}>
@@ -568,15 +601,6 @@ function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrde
                   </div>
                 )}
               </span>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="issues-grid">
-          {allIssues.map((issue, i) => (
-            <div key={i} className={`issue-card issue-${issue.tone}`}>
-              <span className="issue-dot" />
-              <span>{issue.text}</span>
             </div>
           ))}
         </div>
@@ -928,6 +952,10 @@ function EvidenceSimpleSummary({ summary }) {
 function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
   const [selectedSectionName, setSelectedSectionName] = useState("Overall");
 
+  useEffect(() => {
+    setSelectedSectionName("Overall");
+  }, [result.document_hash]);
+
   let rows = [];
   let detailedRows = [];
   let summary = result.evidence_summary_simple || null;
@@ -974,7 +1002,7 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
               const same = rows.every((r, i) => {
                   const p = prevRows[i];
                   return (r["Evidence Area"] || r.criterion) === (p["Evidence Area"] || p.criterion) &&
-                         (r["Similarity Score"] || r.similarity_score) === (p["Similarity Score"] || p.similarity_score);
+                         (r["Similarity Score"] ?? r.similarity_score) === (p["Similarity Score"] ?? p.similarity_score);
               });
               if (same && rows.length > 0) {
                   warningMsg = "Evidence coverage did not change. Possible stale result or extraction issue.";
@@ -1129,6 +1157,7 @@ function SectionDetailCard({ section }) {
   
   const diagnosis = isGemini && section.dynamic_diagnosis ? section.dynamic_diagnosis : section.plain_language_diagnosis;
   const nextBestAction = isGemini && section.dynamic_next_best_action ? section.dynamic_next_best_action : section.next_best_action;
+  const panelRisk = isGemini && section.dynamic_panel_risk ? section.dynamic_panel_risk : section.panel_risk;
 const suggestedWording = isGemini && section.dynamic_suggested_revision_wording ? section.dynamic_suggested_revision_wording : (section.suggested_revision_wording || []);
   const defenseQs = isGemini && section.dynamic_defense_questions ? section.dynamic_defense_questions : (section.defense_questions || []).slice(0, 3);
   const highlights = section.contextual_highlights || section.highlights || [];
@@ -1165,6 +1194,15 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
               Next Best Action {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
             </h4>
             <p style={{ color: "#38bdf8", fontWeight: 500 }}>{nextBestAction}</p>
+          </>
+        )}
+
+        {panelRisk && (
+          <>
+            <h4 className="micro-head">
+              Likely Panel Risk {isGemini && <span title="AI Generated" style={{ fontSize: "0.8em", marginLeft: "4px" }}>✨</span>}
+            </h4>
+            <p>{panelRisk}</p>
           </>
         )}
 
@@ -1283,7 +1321,7 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
                     {evidenceCoverage.map((e, i) => (
                       <tr key={i}>
                         <td>{e["Evidence Area"] || e.criterion}</td>
-                        <td>{Number(e["Similarity Score"] || e.similarity_score).toFixed(3)}</td>
+                        <td>{Number(e["Similarity Score"] ?? e.similarity_score ?? 0).toFixed(3)}</td>
                         <td>
                           <Badge
                             value={e["Coverage Level"] || e.coverage_level}
@@ -1406,6 +1444,7 @@ function SectionResultPanel({ result, prevResult }) {
   const isGemini = result.feedback_mode === "Gemini-grounded";
   const diagnosis = isGemini && result.dynamic_diagnosis ? result.dynamic_diagnosis : result.plain_language_diagnosis;
   const nextBestAction = isGemini && result.dynamic_next_best_action ? result.dynamic_next_best_action : result.next_best_action;
+  const panelRisk = isGemini ? result.dynamic_panel_risk : result.panel_risk;
   const highlights = result.contextual_highlights || [];
   const suggestedWording = isGemini && result.dynamic_suggested_revision_wording
     ? result.dynamic_suggested_revision_wording
@@ -1431,11 +1470,19 @@ function SectionResultPanel({ result, prevResult }) {
           <p style={{ color: "#38bdf8", fontWeight: 500 }}>{nextBestAction}</p>
         </section>
       )}
+      {panelRisk && (
+        <section className="panel">
+          <h2 className="panel-title">
+            Likely Panel Risk {isGemini && <span title="AI Generated" style={{ fontSize: "0.8em", marginLeft: "4px" }}>✨</span>}
+          </h2>
+          <p>{panelRisk}</p>
+        </section>
+      )}
       <ContextualHighlightsPanel highlights={highlights} isGemini={isGemini} />
       <EvidenceCoveragePanel result={result} isManuscript={false} prevResult={prevResult} />
       <RecommendationsPanel
         priorityFixes={result.priority_fixes}
-        revisions={isGemini && result.dynamic_suggested_revision_wording ? result.dynamic_suggested_revision_wording : result.revision_suggestions}
+        revisions={isGemini ? [] : result.revision_suggestions}
         suggestedWording={suggestedWording}
         defenseQs={isGemini && result.dynamic_defense_questions ? result.dynamic_defense_questions : result.defense_questions}
         isGemini={isGemini}

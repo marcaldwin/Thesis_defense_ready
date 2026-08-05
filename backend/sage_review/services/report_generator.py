@@ -2,6 +2,7 @@
 
 import csv
 from pathlib import Path
+from uuid import uuid4
 from xml.sax.saxutils import escape
 
 from reportlab.lib import colors
@@ -15,6 +16,9 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 HISTORY_FIELDS = [
@@ -35,10 +39,10 @@ HISTORY_FIELDS = [
 
 def save_review_history(
     result: dict[str, object],
-    csv_path: str = "data/review_history.csv",
+    csv_path: str | Path | None = None,
 ) -> str:
     """Append one analysis summary row to the review history CSV."""
-    output_path = Path(csv_path)
+    output_path = Path(csv_path) if csv_path else PROJECT_ROOT / "data" / "review_history.csv"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     file_exists = output_path.exists()
 
@@ -181,17 +185,25 @@ def _add_bullet_list(
     story.append(Spacer(1, 6))
 
 
+def _preferred_feedback(result: dict[str, object], dynamic_key: str, fallback_key: str):
+    """Use validated Gemini feedback when active, otherwise template feedback."""
+    if result.get("feedback_mode") == "Gemini-grounded" and result.get(dynamic_key):
+        return result.get(dynamic_key)
+    return result.get(fallback_key)
+
+
 def generate_pdf_report(
     result: dict[str, object],
-    output_dir: str = "reports",
+    output_dir: str | Path | None = None,
 ) -> str:
     """Generate a readable PDF report from a complete analysis result."""
-    output_path = Path(output_dir)
+    output_path = Path(output_dir) if output_dir else PROJECT_ROOT / "reports"
     output_path.mkdir(parents=True, exist_ok=True)
 
     filename_timestamp = str(result["timestamp"]).replace("-", "").replace(":", "")
     filename_timestamp = filename_timestamp.replace(" ", "_")
-    pdf_path = output_path / f"SAGE_Review_Report_{filename_timestamp}.pdf"
+    unique_suffix = uuid4().hex[:8]
+    pdf_path = output_path / f"SAGE_Review_Report_{filename_timestamp}_{unique_suffix}.pdf"
 
     styles = _styles()
     story: list[object] = []
@@ -379,6 +391,33 @@ def generate_pdf_report(
             )
             story.append(_paragraph(section_result.get("score_summary", ""), styles["body"]))
 
+            diagnosis = _preferred_feedback(
+                section_result,
+                "dynamic_diagnosis",
+                "plain_language_diagnosis",
+            )
+            if diagnosis:
+                story.append(_paragraph("Diagnosis", styles["heading"]))
+                story.append(_paragraph(diagnosis, styles["body"]))
+
+            next_action = _preferred_feedback(
+                section_result,
+                "dynamic_next_best_action",
+                "next_best_action",
+            )
+            if next_action:
+                story.append(_paragraph("Next Best Action", styles["heading"]))
+                story.append(_paragraph(next_action, styles["body"]))
+
+            panel_risk = _preferred_feedback(
+                section_result,
+                "dynamic_panel_risk",
+                "panel_risk",
+            )
+            if panel_risk:
+                story.append(_paragraph("Likely Panel Risk", styles["heading"]))
+                story.append(_paragraph(panel_risk, styles["body"]))
+
             story.append(_paragraph("Evidence Coverage", styles["heading"]))
             _add_table(
                 story,
@@ -409,11 +448,32 @@ def generate_pdf_report(
                 [0.65 * inch, 1.35 * inch, 2.2 * inch, 2.3 * inch],
             )
 
-            story.append(_paragraph("Revision Suggestions", styles["heading"]))
-            _add_bullet_list(story, list(section_result.get("revision_suggestions", [])), styles)
+            if section_result.get("feedback_mode") == "Gemini-grounded":
+                story.append(_paragraph("Suggested Revision Wording", styles["heading"]))
+                _add_bullet_list(
+                    story,
+                    list(section_result.get("dynamic_suggested_revision_wording", [])),
+                    styles,
+                )
+            else:
+                story.append(_paragraph("Revision Suggestions", styles["heading"]))
+                _add_bullet_list(story, list(section_result.get("revision_suggestions", [])), styles)
+                story.append(_paragraph("Suggested Revision Wording", styles["heading"]))
+                _add_bullet_list(story, list(section_result.get("suggested_revision_wording", [])), styles)
 
             story.append(_paragraph("Recommended Defense Questions", styles["heading"]))
-            _add_bullet_list(story, list(section_result.get("defense_questions", [])), styles)
+            _add_bullet_list(
+                story,
+                list(
+                    _preferred_feedback(
+                        section_result,
+                        "dynamic_defense_questions",
+                        "defense_questions",
+                    )
+                    or []
+                ),
+                styles,
+            )
 
             story.append(_paragraph("Text Preview", styles["heading"]))
             story.append(_paragraph(str(section_result.get("text_preview", ""))[:1000], styles["body"]))
@@ -439,6 +499,18 @@ def generate_pdf_report(
 
     _add_heading(story, "2. Score Summary", styles)
     story.append(_paragraph(result.get("score_summary", ""), styles["body"]))
+    diagnosis = _preferred_feedback(result, "dynamic_diagnosis", "plain_language_diagnosis")
+    if diagnosis:
+        story.append(_paragraph("Diagnosis", styles["heading"]))
+        story.append(_paragraph(diagnosis, styles["body"]))
+    next_action = _preferred_feedback(result, "dynamic_next_best_action", "next_best_action")
+    if next_action:
+        story.append(_paragraph("Next Best Action", styles["heading"]))
+        story.append(_paragraph(next_action, styles["body"]))
+    panel_risk = _preferred_feedback(result, "dynamic_panel_risk", "panel_risk")
+    if panel_risk:
+        story.append(_paragraph("Likely Panel Risk", styles["heading"]))
+        story.append(_paragraph(panel_risk, styles["body"]))
     story.append(_paragraph("Strengths", styles["heading"]))
     _add_bullet_list(story, list(result.get("strengths", [])), styles)
     story.append(_paragraph("Deductions", styles["heading"]))
@@ -468,8 +540,18 @@ def generate_pdf_report(
         [0.65 * inch, 1.35 * inch, 2.2 * inch, 2.3 * inch],
     )
 
-    _add_heading(story, "5. Revision Suggestions", styles)
-    _add_bullet_list(story, list(result.get("revision_suggestions", [])), styles)
+    if result.get("feedback_mode") == "Gemini-grounded":
+        _add_heading(story, "5. Suggested Revision Wording", styles)
+        _add_bullet_list(
+            story,
+            list(result.get("dynamic_suggested_revision_wording", [])),
+            styles,
+        )
+    else:
+        _add_heading(story, "5. Revision Suggestions", styles)
+        _add_bullet_list(story, list(result.get("revision_suggestions", [])), styles)
+        _add_heading(story, "Suggested Revision Wording", styles)
+        _add_bullet_list(story, list(result.get("suggested_revision_wording", [])), styles)
 
     _add_heading(story, "6. Safer Academic Wording Suggestions", styles)
     _add_table(
@@ -481,7 +563,18 @@ def generate_pdf_report(
     )
 
     _add_heading(story, "7. Recommended Defense Questions", styles)
-    _add_bullet_list(story, list(result.get("defense_questions", [])), styles)
+    _add_bullet_list(
+        story,
+        list(
+            _preferred_feedback(
+                result,
+                "dynamic_defense_questions",
+                "defense_questions",
+            )
+            or []
+        ),
+        styles,
+    )
 
     _add_heading(story, "8. Defense Preparation Notes", styles)
     _add_bullet_list(story, list(result.get("defense_notes", [])), styles)

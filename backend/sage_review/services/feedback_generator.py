@@ -250,24 +250,6 @@ def generate_priority_fixes(
         for item in _weak_and_moderate_items(evidence_coverage)
         if str(item["Evidence Area"]) in expected
     ]
-    if score_result.get("risk_level") == "High":
-        first_area = str(weak_items[0]["Evidence Area"]) if weak_items else None
-        fixes.append(
-            {
-                "Priority": "High",
-                "Issue": f"{predicted_section} needs targeted revision before defense.",
-                "Why It Matters": (
-                    f"The system detected weak expected criteria in {predicted_section}, "
-                    "which may lead to adviser or panel questions."
-                ),
-                "Suggested Fix": (
-                    criterion_fix_guidance(first_area, predicted_section)
-                    if first_area
-                    else f"Review {predicted_section} and add a metric, table reference, or finding that supports its main claim."
-                ),
-            }
-        )
-
     for item in weak_items:
         area = str(item["Evidence Area"])
         level = str(item["Coverage Level"])
@@ -297,18 +279,7 @@ def generate_revision_suggestions(
             ["Clarify the section purpose and connect claims to evidence."],
         )
     )
-    weak = [
-        str(item["Evidence Area"])
-        for item in evidence_coverage
-        if item.get("Coverage Level") == "Weak"
-    ][:3]
-    if weak:
-        first = weak[0]
-        suggestions.append(
-            f"Prioritize {first} in {predicted_section}: "
-            f"{criterion_fix_guidance(first, predicted_section)}"
-        )
-    return suggestions[:4]
+    return list(dict.fromkeys(suggestions))[:3]
 
 
 def generate_defense_questions(

@@ -11,6 +11,9 @@ class HealthResponse(BaseModel):
     """Health check response."""
 
     status: str
+    llm_enabled: bool = False
+    llm_configured: bool = False
+    model_status: str = "unknown"
 
 
 class ReportInfo(BaseModel):
@@ -25,6 +28,9 @@ class FeedbackResponse(BaseModel):
 
     diagnosis: str | None = None
     next_best_action: str | None = None
+    panel_risk: str | None = None
+    feedback_mode: str | None = None
+    feedback_reason: str | None = None
     priority_fixes: list[Any] = Field(default_factory=list)
     revision_suggestions: list[Any] = Field(default_factory=list)
     suggested_revision_wording: list[Any] = Field(default_factory=list)

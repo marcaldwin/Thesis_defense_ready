@@ -820,6 +820,7 @@ class AnalysisService:
         text: str,
         section_name: str | None = None,
         source_filename: str | None = None,
+        enable_llm: bool = True,
     ) -> dict[str, Any]:
         """Run the FastAPI single-section analysis pipeline."""
         clean_text = self.normalize_text(text)
@@ -912,7 +913,16 @@ class AnalysisService:
             canonical_section,
             top_weak_areas_only,
         )
-        generate_panel_risk(canonical_section, top_weak_areas_only)
+        # The first priority fix and next-best action are generated from the
+        # same criterion. Keep the action once instead of repeating it below.
+        normalized_next_action = " ".join(next_best_action.casefold().split())
+        priority_fixes = [
+            fix
+            for fix in priority_fixes
+            if " ".join(str(fix.get("Suggested Fix", "")).casefold().split())
+            != normalized_next_action
+        ]
+        panel_risk = generate_panel_risk(canonical_section, top_weak_areas_only)
         suggested_revision_wording = generate_suggested_revision_wording(
             top_weak_areas_only
         )
@@ -932,13 +942,20 @@ class AnalysisService:
             evidence_coverage,
             expected_areas,
         )
-        gemini_feedback = generate_gemini_feedback(
-            section_name=canonical_section,
-            section_text=analysis_text,
-            top_weak_areas=top_weak_areas_only,
-            defense_score=section_score,
-            risk_level=section_risk,
-            evidence_coverage=evidence_coverage,
+        gemini_feedback = (
+            generate_gemini_feedback(
+                section_name=canonical_section,
+                section_text=analysis_text,
+                top_weak_areas=top_weak_areas_only,
+                defense_score=section_score,
+                risk_level=section_risk,
+                evidence_coverage=evidence_coverage,
+            )
+            if enable_llm
+            else {
+                "feedback_mode": "Template fallback",
+                "feedback_reason": "Not selected for manuscript LLM review",
+            }
         )
 
         generated_feedback = [
@@ -948,6 +965,7 @@ class AnalysisService:
             safer_wording,
             defense_questions,
             defense_notes,
+            gemini_feedback,
         ]
         responsible_ai_warnings = generate_responsible_ai_warnings(
             clean_text,
@@ -957,6 +975,14 @@ class AnalysisService:
         revision_suggestions = filter_unsafe_recommendations(revision_suggestions)
         section_recommendations = filter_unsafe_recommendations(section_recommendations)
         defense_notes = filter_unsafe_recommendations(defense_notes)
+        for dynamic_list_field in (
+            "dynamic_suggested_revision_wording",
+            "dynamic_defense_questions",
+        ):
+            if dynamic_list_field in gemini_feedback:
+                gemini_feedback[dynamic_list_field] = filter_unsafe_recommendations(
+                    gemini_feedback[dynamic_list_field]
+                )
         strong_count, moderate_count, weak_count, top_weak_areas = (
             self.count_evidence_levels(evidence_coverage)
         )
@@ -1048,6 +1074,7 @@ class AnalysisService:
             "top_weak_areas": top_weak_areas,
             "processing_time_seconds": processing_time,
             "next_best_action": next_best_action,
+            "panel_risk": panel_risk,
             "suggested_revision_wording": suggested_revision_wording,
             "contextual_highlights": contextual_highlights["highlights"],
         }
@@ -1117,6 +1144,7 @@ class AnalysisService:
 
         section_details = []
         section_results = []
+        section_llm_sources: list[tuple[dict[str, Any], str]] = []
         for section_name, section_text in extracted_sections.items():
             if section_name == "References":
                 continue
@@ -1125,9 +1153,11 @@ class AnalysisService:
                 section_text,
                 section_name,
                 source_filename=source_filename,
+                enable_llm=False,
             )
             section_result["analysis_mode"] = "Full Manuscript Section"
             section_details.append(section_result)
+            section_llm_sources.append((section_result, section_text))
             section_results.append(
                 {
                     "Section Name": section_result["resolved_section_label"],
@@ -1152,6 +1182,45 @@ class AnalysisService:
                     "Criteria Used": section_result["criteria_used"],
                 }
             )
+
+        # Limit provider calls to the three weakest non-low-risk sections.
+        llm_candidates = sorted(
+            (
+                item
+                for item in section_llm_sources
+                if item[0].get("risk_level") != "Low"
+            ),
+            key=lambda item: float(item[0].get("defense_score", 0)),
+        )[:3]
+        for section_result, section_text in llm_candidates:
+            gemini_feedback = generate_gemini_feedback(
+                section_name=str(section_result.get("scoring_section", "Unknown")),
+                section_text=section_text[:10000],
+                top_weak_areas=list(section_result.get("top_weak_areas", [])),
+                defense_score=float(section_result.get("defense_score", 0)),
+                risk_level=str(section_result.get("risk_level", "High")),
+                evidence_coverage=list(section_result.get("evidence_coverage", [])),
+            )
+            for dynamic_list_field in (
+                "dynamic_suggested_revision_wording",
+                "dynamic_defense_questions",
+            ):
+                if dynamic_list_field in gemini_feedback:
+                    gemini_feedback[dynamic_list_field] = filter_unsafe_recommendations(
+                        gemini_feedback[dynamic_list_field]
+                    )
+            section_result["responsible_ai_warnings"] = list(
+                dict.fromkeys(
+                    [
+                        *section_result.get("responsible_ai_warnings", []),
+                        *generate_responsible_ai_warnings(
+                            section_text,
+                            [gemini_feedback],
+                        ),
+                    ]
+                )
+            )
+            section_result.update(gemini_feedback)
 
         section_extraction_score = (
             (len(major_present) / len(MAJOR_REQUIRED_SECTIONS)) * 100
@@ -1207,7 +1276,7 @@ class AnalysisService:
         else:
             analysis_confidence = "Partial"
 
-        if analysis_confidence == "Low":
+        if analysis_confidence == "Partial":
             result_type = "Extraction Incomplete"
             recommendation = (
                 "Fix headings or analyze sections individually. The extractor could "

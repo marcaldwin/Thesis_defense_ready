@@ -9,6 +9,9 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import logging
+from logging.handlers import RotatingFileHandler
+import os
 import re
 import time
 from typing import Any
@@ -16,12 +19,43 @@ import hashlib
 
 import pandas as pd
 from fastapi import FastAPI, File, HTTPException, Request, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from dotenv import load_dotenv
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
+load_dotenv(PROJECT_ROOT / "backend" / ".env")
+MAX_UPLOAD_BYTES = 20 * 1024 * 1024
+MAX_TEXT_CHARS = 2_000_000
+DEFAULT_FRONTEND_ORIGINS = "http://localhost:5174,http://127.0.0.1:5174"
+FRONTEND_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv("FRONTEND_ORIGINS", DEFAULT_FRONTEND_ORIGINS).split(",")
+    if origin.strip()
+]
+LOGGER = logging.getLogger(__name__)
+LOG_DIR = PROJECT_ROOT / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
+BACKEND_LOG_PATH = LOG_DIR / "backend.log"
+if not any(
+    isinstance(handler, RotatingFileHandler)
+    and Path(handler.baseFilename) == BACKEND_LOG_PATH
+    for handler in LOGGER.handlers
+):
+    file_handler = RotatingFileHandler(
+        BACKEND_LOG_PATH,
+        maxBytes=2_000_000,
+        backupCount=2,
+        encoding="utf-8",
+    )
+    file_handler.setFormatter(
+        logging.Formatter("%(asctime)s %(levelname)s %(name)s: %(message)s")
+    )
+    LOGGER.addHandler(file_handler)
+LOGGER.setLevel(logging.INFO)
 
 from backend.sage_review.core.ai_analyzer import (
     analyze_evidence_coverage,
@@ -90,7 +124,7 @@ app = FastAPI(title="SAGE-Review API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_origins=FRONTEND_ORIGINS,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -231,6 +265,12 @@ def analyze_section_pipeline(
         )
     except AnalysisServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception as exc:
+        LOGGER.exception("Section analysis failed")
+        raise HTTPException(
+            status_code=503,
+            detail="The NLP analysis could not complete. Please retry after the models finish loading.",
+        ) from exc
 
 
 def build_manuscript_evidence_summary(
@@ -274,6 +314,12 @@ def analyze_full_manuscript_pipeline(text: str, source_filename: str | None = No
         )
     except AnalysisServiceError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
+    except Exception as exc:
+        LOGGER.exception("Full-manuscript analysis failed")
+        raise HTTPException(
+            status_code=503,
+            detail="The manuscript analysis could not complete. Check the document and retry.",
+        ) from exc
 
 
 async def extract_text_from_request(request: Request) -> tuple[str, str | None]:
@@ -283,28 +329,93 @@ async def extract_text_from_request(request: Request) -> tuple[str, str | None]:
     (``normalize_text`` for single sections, ``normalize_manuscript_text`` for
     full manuscripts, which keeps newlines so headings can be detected).
     """
+    content_length = request.headers.get("content-length")
+    if content_length:
+        try:
+            if int(content_length) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="The request is larger than the 20 MB limit.",
+                )
+        except ValueError:
+            pass
+
     content_type = request.headers.get("content-type", "")
     if "multipart/form-data" in content_type:
         form = await request.form()
         text = str(form.get("text", "") or "")
         upload = form.get("file")
         if upload is not None and getattr(upload, "filename", ""):
-            content = await upload.read()
+            content = await upload.read(MAX_UPLOAD_BYTES + 1)
+            if len(content) > MAX_UPLOAD_BYTES:
+                raise HTTPException(
+                    status_code=413,
+                    detail="The uploaded document is larger than the 20 MB limit.",
+                )
             adapter = UploadedFileAdapter(upload.filename, content)
-            uploaded_text = str(extract_text_from_uploaded_file(adapter) or "")
-            return uploaded_text or text, upload.filename
+            try:
+                uploaded_text = str(extract_text_from_uploaded_file(adapter) or "")
+            except ValueError as exc:
+                raise HTTPException(status_code=422, detail=str(exc)) from exc
+            except Exception as exc:
+                raise HTTPException(
+                    status_code=422,
+                    detail="The uploaded document could not be read. Check its format and try again.",
+                ) from exc
+            selected_text = uploaded_text or text
+            if len(selected_text) > MAX_TEXT_CHARS:
+                raise HTTPException(status_code=413, detail="The extracted text is too large to analyze.")
+            return selected_text, upload.filename
+        if len(text) > MAX_TEXT_CHARS:
+            raise HTTPException(status_code=413, detail="The submitted text is too large to analyze.")
         return text, None
 
-    payload = await request.json()
-    return str(payload.get("text", "") or ""), None
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="A valid JSON request body is required.") from exc
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="The JSON request body must be an object.")
+    text = str(payload.get("text", "") or "")
+    if len(text) > MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="The submitted text is too large to analyze.")
+    return text, None
 
 
 def attach_report(result: dict[str, Any]) -> dict[str, Any]:
     """Save history, generate a PDF report, and attach the download filename."""
-    save_review_history(result)
-    pdf_path = Path(generate_pdf_report(result))
-    result["report_filename"] = pdf_path.name
+    try:
+        save_review_history(result)
+        pdf_path = Path(generate_pdf_report(result))
+        result["report_filename"] = pdf_path.name
+    except Exception:
+        LOGGER.exception("Report generation failed")
+        result["report_filename"] = None
+        result["report_error"] = (
+            "The analysis completed, but the PDF report could not be generated."
+        )
     return result
+
+
+def evaluate_dataset_pipeline(content: bytes) -> dict[str, Any]:
+    """Validate, evaluate, and persist one uploaded evaluation dataset."""
+    try:
+        df = load_evaluation_dataset(BytesIO(content))
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(
+            status_code=422,
+            detail="The evaluation CSV is invalid or is missing required columns.",
+        ) from exc
+    results_df = run_evaluation_on_dataset(df)
+    summary = generate_evaluation_summary(results_df)
+    results_path = Path(save_evaluation_results(results_df))
+    return {
+        "summary": summary,
+        "results": dataframe_records(results_df),
+        "results_filename": results_path.name,
+    }
 
 
 def normalize_analysis_response(result: dict[str, Any]) -> dict[str, Any]:
@@ -318,6 +429,7 @@ def normalize_analysis_response(result: dict[str, Any]) -> dict[str, Any]:
     next_best_action = result.get("dynamic_next_best_action") or result.get(
         "next_best_action"
     )
+    panel_risk = result.get("dynamic_panel_risk") or result.get("panel_risk")
     suggested_revision_wording = result.get(
         "dynamic_suggested_revision_wording",
         result.get("suggested_revision_wording", []),
@@ -346,8 +458,15 @@ def normalize_analysis_response(result: dict[str, Any]) -> dict[str, Any]:
         {
             "diagnosis": diagnosis,
             "next_best_action": next_best_action,
+            "panel_risk": panel_risk,
+            "feedback_mode": result.get("feedback_mode", "Template fallback"),
+            "feedback_reason": result.get("feedback_reason"),
             "priority_fixes": result.get("priority_fixes", []),
-            "revision_suggestions": result.get("revision_suggestions", []),
+            "revision_suggestions": (
+                []
+                if result.get("feedback_mode") == "Gemini-grounded"
+                else result.get("revision_suggestions", [])
+            ),
             "suggested_revision_wording": suggested_revision_wording,
             "defense_questions": defense_questions,
             "defense_notes": result.get(
@@ -450,35 +569,46 @@ def apply_revision_guardrails(result: dict[str, Any]) -> dict[str, Any]:
 @app.get("/health", response_model=HealthResponse)
 def health() -> HealthResponse:
     """Health check endpoint."""
-    return HealthResponse(status="ok")
+    return HealthResponse(
+        status="ok",
+        llm_enabled=os.getenv("LLM_FEEDBACK_ENABLED", "false").lower() == "true",
+        llm_configured=bool(os.getenv("GEMINI_API_KEY", "").strip()),
+        model_status="lazy-loaded",
+    )
 
 
 @app.post("/analyze-section", response_model=AnalysisResponse)
 async def analyze_section(request: Request) -> dict[str, Any]:
     """Analyze one pasted or uploaded thesis section."""
     text, filename = await extract_text_from_request(request)
-    result = analyze_section_pipeline(text, source_filename=filename)
-    return normalize_analysis_response(attach_report(result))
+    result = await run_in_threadpool(analyze_section_pipeline, text, None, filename)
+    result = await run_in_threadpool(attach_report, result)
+    return normalize_analysis_response(result)
 
 
 @app.post("/analyze-full-manuscript", response_model=AnalysisResponse)
 async def analyze_full_manuscript(request: Request) -> dict[str, Any]:
     """Analyze a full manuscript or large chapter."""
     text, filename = await extract_text_from_request(request)
-    result = analyze_full_manuscript_pipeline(text, source_filename=filename)
-    return normalize_analysis_response(attach_report(result))
+    result = await run_in_threadpool(analyze_full_manuscript_pipeline, text, filename)
+    result = await run_in_threadpool(attach_report, result)
+    return normalize_analysis_response(result)
 
 
 @app.post("/compare-revisions", response_model=RevisionComparisonResponse)
 async def compare_revisions(payload: CompareRevisionsRequest) -> dict[str, Any]:
     """Compare original and revised thesis section versions."""
-    original_result = apply_revision_guardrails(
-        analyze_revision_text(payload.original_text)
+    if max(len(payload.original_text), len(payload.revised_text)) > MAX_TEXT_CHARS:
+        raise HTTPException(status_code=413, detail="One of the submitted revisions is too large.")
+    original_result = await run_in_threadpool(analyze_revision_text, payload.original_text)
+    revised_result = await run_in_threadpool(analyze_revision_text, payload.revised_text)
+    original_result = apply_revision_guardrails(original_result)
+    revised_result = apply_revision_guardrails(revised_result)
+    comparison = await run_in_threadpool(
+        compare_revision_results,
+        original_result,
+        revised_result,
     )
-    revised_result = apply_revision_guardrails(
-        analyze_revision_text(payload.revised_text)
-    )
-    comparison = compare_revision_results(original_result, revised_result)
     return normalize_revision_response({
         "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "comparison": comparison,
@@ -490,19 +620,14 @@ async def compare_revisions(payload: CompareRevisionsRequest) -> dict[str, Any]:
 @app.post("/evaluate-dataset", response_model=EvaluationResponse)
 async def evaluate_dataset(file: UploadFile = File(...)) -> dict[str, Any]:
     """Run SAGE-Review on a labeled evaluation dataset CSV."""
-    if not file.filename.lower().endswith(".csv"):
+    if not file.filename or not file.filename.lower().endswith(".csv"):
         raise HTTPException(status_code=400, detail="Please upload a CSV file.")
 
-    content = await file.read()
-    df = load_evaluation_dataset(BytesIO(content))
-    results_df = run_evaluation_on_dataset(df)
-    summary = generate_evaluation_summary(results_df)
-    results_path = Path(save_evaluation_results(results_df))
-    return normalize_evaluation_response({
-        "summary": summary,
-        "results": dataframe_records(results_df),
-        "results_filename": results_path.name,
-    })
+    content = await file.read(MAX_UPLOAD_BYTES + 1)
+    if len(content) > MAX_UPLOAD_BYTES:
+        raise HTTPException(status_code=413, detail="The evaluation CSV exceeds 20 MB.")
+    result = await run_in_threadpool(evaluate_dataset_pipeline, content)
+    return normalize_evaluation_response(result)
 
 
 @app.get("/download-report/{filename}")

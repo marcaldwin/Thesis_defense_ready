@@ -6,6 +6,7 @@ model-driven.
 """
 
 import re
+from threading import Lock
 from typing import Any
 
 import numpy as np
@@ -157,16 +158,20 @@ EVIDENCE_INTERPRETATIONS = {
 
 _section_classifier: Any = None
 _embedding_model: SentenceTransformer | None = None
+_section_classifier_lock = Lock()
+_embedding_model_lock = Lock()
 
 
 def load_section_classifier() -> Any:
     """Load and cache the zero-shot classification pipeline (module singleton)."""
     global _section_classifier
     if _section_classifier is None:
-        _section_classifier = pipeline(
-            task="zero-shot-classification",
-            model=MODEL_NAME,
-        )
+        with _section_classifier_lock:
+            if _section_classifier is None:
+                _section_classifier = pipeline(
+                    task="zero-shot-classification",
+                    model=MODEL_NAME,
+                )
     return _section_classifier
 
 
@@ -174,7 +179,9 @@ def load_embedding_model() -> SentenceTransformer:
     """Load and cache the sentence-transformers embedding model (module singleton)."""
     global _embedding_model
     if _embedding_model is None:
-        _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        with _embedding_model_lock:
+            if _embedding_model is None:
+                _embedding_model = SentenceTransformer(EMBEDDING_MODEL_NAME)
     return _embedding_model
 
 

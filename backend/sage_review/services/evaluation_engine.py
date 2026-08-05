@@ -5,10 +5,14 @@ dataset so the system can be compared with manual section labels and scores.
 """
 
 from pathlib import Path
+from uuid import uuid4
 import re
 import time
 
 import pandas as pd
+
+
+PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 from backend.sage_review.core.ai_analyzer import (
     analyze_evidence_coverage,
@@ -295,10 +299,14 @@ def generate_evaluation_summary(results_df: pd.DataFrame) -> dict[str, object]:
 
 def save_evaluation_results(
     results_df: pd.DataFrame,
-    output_path: str = "data/evaluation_results.csv",
+    output_path: str | Path | None = None,
 ) -> str:
     """Save evaluation results to CSV and return the output path."""
-    path = Path(output_path)
+    path = (
+        Path(output_path)
+        if output_path
+        else PROJECT_ROOT / "data" / f"evaluation_results_{uuid4().hex[:8]}.csv"
+    )
     path.parent.mkdir(parents=True, exist_ok=True)
     results_df.to_csv(path, index=False)
     return str(path)

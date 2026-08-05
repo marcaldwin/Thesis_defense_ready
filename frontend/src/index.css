@@ -200,10 +200,21 @@ input[type="file"] {
 }
 
 textarea:focus,
-input:focus {
+input:focus,
+select:focus {
   outline: none;
   border-color: var(--accent-strong);
   box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.18);
+}
+
+button:focus-visible,
+a:focus-visible,
+textarea:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid var(--accent-strong);
+  outline-offset: 2px;
 }
 
 .grid-2 {
