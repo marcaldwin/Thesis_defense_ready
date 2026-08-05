@@ -14,6 +14,7 @@ from backend.sage_review.core.ai_analyzer import (
 )
 from backend.sage_review.core.ai_scoring import compute_defense_readiness_score
 from backend.sage_review.core.alignment_analyzer import generate_alignment_matrix
+from backend.sage_review.core.document_loader import sanitize_unicode_text
 from backend.sage_review.core.evidence_analyzer import normalize_section_name
 from backend.sage_review.core.highlight_analyzer import analyze_contextual_highlights
 from backend.sage_review.core.responsible_ai_guardrail import (
@@ -100,7 +101,7 @@ class AnalysisService:
                 except UnicodeDecodeError:
                     continue
 
-        text = str(value)
+        text = sanitize_unicode_text(value)
         text = text.replace("\x00", " ").replace("\xa0", " ")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         text = re.sub(r"[ \t]+", " ", text)
@@ -111,7 +112,7 @@ class AnalysisService:
         """Clean text for single-section API analysis."""
         if value is None:
             return ""
-        text = str(value)
+        text = sanitize_unicode_text(value)
         text = text.replace("\x00", " ").replace("\xa0", " ")
         return " ".join(text.split())
 
@@ -119,7 +120,7 @@ class AnalysisService:
         """Clean full-manuscript text while preserving line breaks."""
         if value is None:
             return ""
-        text = str(value)
+        text = sanitize_unicode_text(value)
         text = text.replace("\x00", " ").replace("\xa0", " ")
         text = text.replace("\r\n", "\n").replace("\r", "\n")
         lines = [re.sub(r"[ \t]+", " ", line).strip() for line in text.split("\n")]

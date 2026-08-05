@@ -25,7 +25,10 @@ function startSageBackend() {
           "--host",
           "127.0.0.1",
           "--port",
-          String(backendPort)
+          String(backendPort),
+          "--reload",
+          "--reload-dir",
+          path.resolve(projectDir, "backend")
         ],
         {
           cwd: projectDir,

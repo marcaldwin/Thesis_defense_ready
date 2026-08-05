@@ -11,6 +11,7 @@ transformers
 torch
 reportlab
 python-docx
-PyPDF2
+pypdf>=6.0,<7
+wordninja==2.0.0
 google-genai
 python-dotenv

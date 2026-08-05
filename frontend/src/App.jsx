@@ -13,15 +13,19 @@ import {
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "/api";
 
 const TABS = [
-  { id: "section", label: "Analyze Section" },
-  { id: "manuscript", label: "Analyze Full Manuscript" },
-  { id: "compare", label: "Compare Revisions" },
-  { id: "evaluate", label: "Evaluate Dataset" }
+  { id: "section", label: "Section review", description: "Check one chapter", icon: "section" },
+  { id: "manuscript", label: "Full manuscript", description: "Review the whole thesis", icon: "manuscript" },
+  { id: "compare", label: "Compare drafts", description: "Measure improvement", icon: "compare" },
+  { id: "evaluate", label: "Dataset test", description: "Validate the model", icon: "dataset" }
 ];
 
 export default function App() {
   const [activeTab, setActiveTab] = useState("section");
-  const [backendStatus, setBackendStatus] = useState("checking");
+  const [theme, setTheme] = useState(() => {
+    const savedTheme = window.localStorage.getItem("sage-theme");
+    if (savedTheme === "light" || savedTheme === "dark") return savedTheme;
+    return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  });
 
   const [sectionText, setSectionText] = useState("");
   const [sectionFile, setSectionFile] = useState(null);
@@ -38,22 +42,9 @@ export default function App() {
   const activeRequestRef = useRef(null);
 
   useEffect(() => {
-    let cancelled = false;
-    async function checkHealth() {
-      try {
-        const res = await fetch(`${API_BASE_URL}/health`);
-        if (!cancelled) setBackendStatus(res.ok ? "online" : "offline");
-      } catch {
-        if (!cancelled) setBackendStatus("offline");
-      }
-    }
-    checkHealth();
-    const id = setInterval(checkHealth, 15000);
-    return () => {
-      cancelled = true;
-      clearInterval(id);
-    };
-  }, []);
+    document.documentElement.dataset.theme = theme;
+    window.localStorage.setItem("sage-theme", theme);
+  }, [theme]);
 
   function clearOutput(cancelActiveRequest = true) {
     if (cancelActiveRequest && activeRequestRef.current) {
@@ -213,20 +204,37 @@ export default function App() {
   return (
     <main className="app">
       <header className="app-header">
-        <div className="brand">
-          <span className="brand-tag">SAGE-Review</span>
-          <h1>Intelligent Thesis Defense Readiness &amp; Manuscript Evaluation</h1>
-          <p className="muted">
-            AI/NLP semantic analysis for thesis section classification, evidence
-            coverage, defense readiness scoring, and revision review.
-          </p>
+        <div className="brand-lockup">
+          <div className="brand-mark" aria-hidden="true">S</div>
+          <div className="brand">
+            <span className="brand-tag">SAGE-Review</span>
+            <h1>Thesis readiness workspace</h1>
+            <p className="muted">
+              Find evidence gaps, strengthen your manuscript, and prepare for defense.
+            </p>
+          </div>
         </div>
-        <div className={`status status-${backendStatus}`} role="status" aria-live="polite">
-          <span className="status-dot" />
-          {backendStatus === "online" && "Backend Online"}
-          {backendStatus === "offline" && "Backend Offline"}
-          {backendStatus === "checking" && "Checking Backend..."}
-        </div>
+        <button
+          type="button"
+          className="theme-toggle"
+          onClick={() => setTheme((current) => current === "dark" ? "light" : "dark")}
+          aria-label={`Switch to ${theme === "dark" ? "light" : "dark"} mode`}
+          aria-pressed={theme === "dark"}
+        >
+          <span className="theme-toggle-icon" aria-hidden="true">
+            {theme === "dark" ? (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round">
+                <circle cx="12" cy="12" r="4" />
+                <path d="M12 2v2M12 20v2M4.93 4.93l1.42 1.42M17.65 17.65l1.42 1.42M2 12h2M20 12h2M4.93 19.07l1.42-1.42M17.65 6.35l1.42-1.42" />
+              </svg>
+            ) : (
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20.2 15.4A8.5 8.5 0 0 1 8.6 3.8 8.5 8.5 0 1 0 20.2 15.4Z" />
+              </svg>
+            )}
+          </span>
+          <span>{theme === "dark" ? "Light mode" : "Dark mode"}</span>
+        </button>
       </header>
 
       <nav className="tabs" role="tablist" aria-label="Analysis modes">
@@ -240,16 +248,26 @@ export default function App() {
             className={`tab ${activeTab === tab.id ? "tab-active" : ""}`}
             onClick={() => handleTabChange(tab.id)}
           >
-            {tab.label}
+            <ModeIcon name={tab.icon} />
+            <span className="tab-copy">
+              <span className="tab-label">{tab.label}</span>
+              <span className="tab-description">{tab.description}</span>
+            </span>
           </button>
         ))}
       </nav>
 
-      <section id="analysis-panel" className="panel" role="tabpanel">
+      <section id="analysis-panel" className="panel analysis-panel" role="tabpanel">
         {activeTab === "section" && (
-          <Form title="Analyze a Single Thesis Section">
+          <Form
+            eyebrow="Focused review"
+            title="Review one thesis section"
+            description="Paste the section below or upload a document. You will get a readiness score and a short revision plan."
+          >
             <Field label="Thesis section text">
               <textarea
+                id="section-text"
+                name="section_text"
                 rows={12}
                 value={sectionText}
                 onChange={(e) => updateSectionText(e.target.value)}
@@ -258,6 +276,8 @@ export default function App() {
             </Field>
             <Field label="Or upload a document (PDF / DOCX / TXT)">
               <input
+                id="section-file"
+                name="section_file"
                 type="file"
                 accept=".pdf,.docx,.txt"
                 onChange={(e) => updateSectionFile(e.target.files?.[0] || null)}
@@ -274,9 +294,15 @@ export default function App() {
         )}
 
         {activeTab === "manuscript" && (
-          <Form title="Analyze a Full Manuscript">
+          <Form
+            eyebrow="Complete review"
+            title="Review your full manuscript"
+            description="Upload your thesis to see section readiness, evidence coverage, and the most important fixes first."
+          >
             <Field label="Full manuscript text">
               <textarea
+                id="manuscript-text"
+                name="manuscript_text"
                 rows={12}
                 value={manuscriptText}
                 onChange={(e) => updateManuscriptText(e.target.value)}
@@ -285,6 +311,8 @@ export default function App() {
             </Field>
             <Field label="Or upload a manuscript (PDF / DOCX / TXT)">
               <input
+                id="manuscript-file"
+                name="manuscript_file"
                 type="file"
                 accept=".pdf,.docx,.txt"
                 onChange={(e) => updateManuscriptFile(e.target.files?.[0] || null)}
@@ -303,10 +331,16 @@ export default function App() {
         )}
 
         {activeTab === "compare" && (
-          <Form title="Compare Original and Revised Section">
+          <Form
+            eyebrow="Revision check"
+            title="Compare two drafts"
+            description="See whether the revision improved evidence coverage and defense readiness."
+          >
             <div className="grid-2">
               <Field label="Original">
                 <textarea
+                  id="original-text"
+                  name="original_text"
                   rows={12}
                   value={originalText}
                   onChange={(e) => updateOriginalText(e.target.value)}
@@ -315,6 +349,8 @@ export default function App() {
               </Field>
               <Field label="Revised">
                 <textarea
+                  id="revised-text"
+                  name="revised_text"
                   rows={12}
                   value={revisedText}
                   onChange={(e) => updateRevisedText(e.target.value)}
@@ -332,9 +368,15 @@ export default function App() {
         )}
 
         {activeTab === "evaluate" && (
-          <Form title="Evaluate a Labeled Dataset (CSV)">
+          <Form
+            eyebrow="Quality assurance"
+            title="Evaluate a labeled dataset"
+            description="Upload a CSV to measure classification and issue-detection performance."
+          >
             <Field label="Evaluation CSV">
               <input
+                id="evaluation-file"
+                name="evaluation_file"
                 type="file"
                 accept=".csv"
                 onChange={(e) => updateCsvFile(e.target.files?.[0] || null)}
@@ -369,11 +411,15 @@ export default function App() {
 
 /* ───────────────────────── Input helpers ───────────────────────── */
 
-function Form({ title, children }) {
+function Form({ eyebrow, title, description, children }) {
   return (
     <div className="form">
-      <h2 className="panel-title">{title}</h2>
-      {children}
+      <div className="form-heading">
+        {eyebrow && <span className="section-eyebrow">{eyebrow}</span>}
+        <h2 className="panel-title">{title}</h2>
+        {description && <p className="form-description">{description}</p>}
+      </div>
+      <div className="form-body">{children}</div>
     </div>
   );
 }
@@ -395,8 +441,26 @@ function PrimaryButton({ loading, onClick, label, loadingLabel }) {
       onClick={onClick}
       disabled={loading}
     >
-      {loading ? loadingLabel : label}
+      {loading && <span className="button-spinner" aria-hidden="true" />}
+      <span>{loading ? loadingLabel : label}</span>
+      {!loading && <span className="button-arrow" aria-hidden="true">→</span>}
     </button>
+  );
+}
+
+function ModeIcon({ name }) {
+  const paths = {
+    section: <><path d="M7 3.75h7l3 3V20.25H7z" /><path d="M14 3.75v3h3M10 11h4M10 14.5h4" /></>,
+    manuscript: <><path d="M6 4.5h9.5a2 2 0 0 1 2 2v13H8a2 2 0 0 1-2-2z" /><path d="M8 4.5v15M11 9h3.5M11 12.5h3.5" /></>,
+    compare: <><path d="M7.5 7h10M14.5 4l3 3-3 3M16.5 17h-10M9.5 14l-3 3 3 3" /></>,
+    dataset: <><ellipse cx="12" cy="6" rx="6" ry="2.5" /><path d="M6 6v6c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V6M6 12v5.5c0 1.4 2.7 2.5 6 2.5s6-1.1 6-2.5V12" /></>
+  };
+  return (
+    <span className="mode-icon" aria-hidden="true">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round">
+        {paths[name]}
+      </svg>
+    </span>
   );
 }
 
@@ -450,10 +514,10 @@ function coverageBadgeTone(value) {
 
 function coverageFill(value) {
   const v = String(value || "").toLowerCase();
-  if (v === "strong") return "#4ade80";
-  if (v === "moderate") return "#facc15";
-  if (v === "weak") return "#f87171";
-  return "#22d3ee";
+  if (v === "strong") return "#3c9560";
+  if (v === "moderate") return "#cf9130";
+  if (v === "weak") return "#cf5656";
+  return "#0f766e";
 }
 
 function evidenceScoreLabel(row) {
@@ -476,10 +540,10 @@ function shortenPair(pair) {
 }
 
 const CHART_TOOLTIP_STYLE = {
-  background: "#0f172a",
-  border: "1px solid #1f2d4d",
-  borderRadius: 6,
-  color: "#e2e8f0",
+  background: "var(--panel)",
+  border: "1px solid var(--border)",
+  borderRadius: 10,
+  color: "var(--text)",
   fontSize: 12
 };
 
@@ -487,32 +551,82 @@ const CHART_TOOLTIP_STYLE = {
 
 function ManuscriptDashboard({ result, prevResult }) {
   return (
-    <>
+    <div className="results-dashboard">
+      <ResultHeading
+        title="Manuscript review"
+        subtitle="Start with the priorities, then open the supporting analysis when you need it."
+        result={result}
+      />
       <ExecutiveSummary result={result} />
-      <MainIssuesPanel
-        issues={result.main_issues}
-        explainedIssues={result.main_issues_explained}
-        recommendedFixOrder={result.recommended_fix_order}
-        extractionWarnings={result.extraction_warnings}
-      />
-      <HighlightsPanel
-        topWeakSections={result.top_weak_sections}
-        topWeakSectionsExplained={result.top_weak_sections_explained}
-        topWeakAlignmentPairs={result.top_weak_alignment_pairs}
-        alignmentWeaknessesExplained={result.alignment_weaknesses_explained}
-      />
-      <DetectedHeadingsPanel
-        majorHeadings={result.major_detected_headings || result.detected_headings}
-      />
+      <div className="dashboard-grid dashboard-grid-priority">
+        <MainIssuesPanel
+          issues={result.main_issues}
+          explainedIssues={result.main_issues_explained}
+          recommendedFixOrder={result.recommended_fix_order}
+          extractionWarnings={result.extraction_warnings}
+        />
+        <HighlightsPanel
+          topWeakSections={result.top_weak_sections}
+          topWeakSectionsExplained={result.top_weak_sections_explained}
+          topWeakAlignmentPairs={result.top_weak_alignment_pairs}
+          alignmentWeaknessesExplained={result.alignment_weaknesses_explained}
+        />
+      </div>
       <SectionSummaryPanel sectionResults={result.section_results} />
-      <AlignmentMatrixPanel
-        rows={result.raw_alignment_results?.length ? result.raw_alignment_results : result.alignment_results}
-      />
       <EvidenceCoveragePanel result={result} isManuscript={true} prevResult={prevResult} />
-      <SectionDetailsPanel sections={result.section_details} />
+      <DashboardAccordion
+        title="Section-by-section review"
+        description="Open detailed diagnoses, revision ideas, and scoring evidence."
+      >
+        <SectionDetailsPanel sections={result.section_details} />
+      </DashboardAccordion>
+      <DashboardAccordion
+        title="Alignment and document structure"
+        description="Inspect section relationships and the headings detected in the file."
+      >
+        <AlignmentMatrixPanel
+          rows={result.raw_alignment_results?.length ? result.raw_alignment_results : result.alignment_results}
+        />
+        <DetectedHeadingsPanel
+          majorHeadings={result.major_detected_headings || result.detected_headings}
+        />
+      </DashboardAccordion>
       <OverallNotesPanel notes={result.overall_defense_notes} />
       <DownloadReportPanel filename={result.report_filename} />
-    </>
+    </div>
+  );
+}
+
+function ResultHeading({ title, subtitle, result }) {
+  return (
+    <section className="result-heading">
+      <div>
+        <span className="section-eyebrow">Analysis complete</span>
+        <h2>{title}</h2>
+        <p>{subtitle}</p>
+      </div>
+      <div className="result-source" aria-label="Analysis source">
+        <span className="result-source-label">Source</span>
+        <strong>{result.source_filename || "Pasted text"}</strong>
+        {result.analysis_timestamp && <span>{result.analysis_timestamp}</span>}
+      </div>
+    </section>
+  );
+}
+
+function DashboardAccordion({ title, description, children }) {
+  return (
+    <details className="dashboard-accordion">
+      <summary>
+        <span className="accordion-icon" aria-hidden="true">+</span>
+        <span>
+          <strong>{title}</strong>
+          <small>{description}</small>
+        </span>
+        <span className="accordion-action">View details</span>
+      </summary>
+      <div className="accordion-content">{children}</div>
+    </details>
   );
 }
 
@@ -523,41 +637,56 @@ function ExecutiveSummary({ result }) {
   const wordCount = result.word_count;
   const processingTime = result.processing_time_seconds;
   const isIncomplete = result.result_type === "Extraction Incomplete";
+  const numericScore = Number(score);
+  const safeScore = Number.isFinite(numericScore)
+    ? Math.max(0, Math.min(100, numericScore))
+    : 0;
 
   const items = [
-    score != null && {
-      label: "Overall Readiness",
-      value: isIncomplete ? "Not reliable" : `${score}/100`,
-      tone: isIncomplete ? "muted" : riskBadgeTone(risk)
-    },
     risk && {
-      label: "Risk Level",
+      label: "Defense risk",
       value: <Badge value={risk} tone={riskBadgeTone(risk)} />
     },
     confidence && {
-      label: "Analysis Confidence",
+      label: "Confidence",
       value: <Badge value={confidence} tone={confidenceBadgeTone(confidence)} />
     },
     wordCount != null && {
-      label: "Total Word Count",
+      label: "Words reviewed",
       value: typeof wordCount === "number" ? wordCount.toLocaleString() : wordCount
     },
     processingTime != null && {
-      label: "Processing Time",
+      label: "Review time",
       value: `${processingTime}s`
     }
   ].filter(Boolean);
 
   return (
-    <section className="panel">
-      <h2 className="panel-title">Executive Summary</h2>
-      <div className="exec-grid">
-        {items.map((item, i) => (
-          <ScoreCard key={i} {...item} />
-        ))}
+    <section className="panel summary-panel">
+      <div className="readiness-score">
+        <div
+          className={`score-ring ring-${isIncomplete ? "muted" : riskBadgeTone(risk)}`}
+          style={{ "--score-angle": `${safeScore * 3.6}deg` }}
+          aria-label={`Readiness score ${isIncomplete ? "not reliable" : `${score} out of 100`}`}
+        >
+          <div className="score-ring-inner">
+            <strong>{isIncomplete ? "–" : Math.round(safeScore)}</strong>
+            <span>/ 100</span>
+          </div>
+        </div>
+        <div className="readiness-copy">
+          <span className="section-eyebrow">Readiness score</span>
+          <h3>{isIncomplete ? "Document structure needs attention" : `${risk || "Unknown"} defense risk`}</h3>
+          <p>{isIncomplete
+            ? "Fix the manuscript headings before relying on the overall score."
+            : "Use the priority actions below as your revision checklist."}</p>
+        </div>
+      </div>
+      <div className="summary-stats">
+        {items.map((item, i) => <ScoreCard key={i} {...item} />)}
       </div>
       {isIncomplete && result.recommendation && (
-        <div className="alert alert-error" style={{ marginTop: 12 }}>
+        <div className="alert alert-error summary-alert">
           <strong>{result.result_type}:</strong> {result.recommendation}
         </div>
       )}
@@ -568,12 +697,18 @@ function ExecutiveSummary({ result }) {
 function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrder = [], extractionWarnings = [] }) {
   const allIssues = [
     ...(extractionWarnings || []).map((w) => ({ text: w, tone: "warn" })),
-    ...(issues || []).map((w) => ({ text: w, tone: "warn" }))
+    ...(!explainedIssues.length ? (issues || []).map((w) => ({ text: w, tone: "warn" })) : [])
   ];
   if (!allIssues.length && !explainedIssues.length && !recommendedFixOrder.length) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Main Issues</h2>
+    <section className="panel priority-panel">
+      <div className="panel-heading-row">
+        <div>
+          <span className="section-eyebrow">Needs attention</span>
+          <h2 className="panel-title">Priority issues</h2>
+        </div>
+        <span className="count-chip">{allIssues.length + explainedIssues.length}</span>
+      </div>
       {allIssues.length > 0 && (
         <div className="issues-grid">
           {allIssues.map((issue, i) => (
@@ -589,15 +724,15 @@ function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrde
           {explainedIssues.map((issue, i) => (
             <div key={i} className={`issue-card issue-${riskBadgeTone(issue.severity)}`}>
               <span className="issue-dot" />
-              <span>
-                <strong>{issue.title}</strong>
+              <span className="issue-copy">
+                <strong className="issue-title">{issue.title}</strong>
                 {issue.affected_sections?.length > 0 && (
                   <div className="muted small">Affected: {issue.affected_sections.join(", ")}</div>
                 )}
                 <div className="muted small">{issue.reason}</div>
                 {issue.next_action && (
                   <div className="muted small" style={{ marginTop: 4 }}>
-                    Fix: {issue.next_action}
+                    <span className="action-label">Next:</span> {issue.next_action}
                   </div>
                 )}
               </span>
@@ -607,16 +742,17 @@ function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrde
       )}
       {recommendedFixOrder.length > 0 && (
         <>
-          <h3 className="subhead" style={{ marginTop: 12 }}>Recommended Fix Order</h3>
-          <ul className="bare-list">
+          <h3 className="subhead fix-order-title">Recommended order</h3>
+          <ol className="fix-order-list">
             {recommendedFixOrder.slice(0, 3).map((fix) => (
               <li key={fix.priority}>
-                <strong>{fix.priority}. {fix.section || fix.issue_type}</strong>{" "}
-                {fix.fix}
+                <span className="fix-number">{fix.priority}</span>
+                <span><strong>{fix.section || fix.issue_type}</strong>{" "}{fix.fix}
                 {fix.why && <div className="muted small">{fix.why}</div>}
+                </span>
               </li>
             ))}
-          </ul>
+          </ol>
         </>
       )}
     </section>
@@ -626,8 +762,13 @@ function MainIssuesPanel({ issues = [], explainedIssues = [], recommendedFixOrde
 function HighlightsPanel({ topWeakSections = [], topWeakSectionsExplained = [], topWeakAlignmentPairs = [], alignmentWeaknessesExplained = [] }) {
   if (!topWeakSections.length && !topWeakSectionsExplained.length && !topWeakAlignmentPairs.length && !alignmentWeaknessesExplained.length) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Highlights</h2>
+    <section className="panel focus-panel">
+      <div className="panel-heading-row">
+        <div>
+          <span className="section-eyebrow">Where to focus</span>
+          <h2 className="panel-title">Weakest areas</h2>
+        </div>
+      </div>
       <div className="grid-2">
         <div>
           <h3 className="subhead">Top Weak Sections</h3>
@@ -785,8 +926,14 @@ function HeadingsTable({ rows }) {
 function SectionSummaryPanel({ sectionResults = [] }) {
   if (!sectionResults.length) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Section Summary</h2>
+    <section className="panel section-summary-panel">
+      <div className="panel-heading-row">
+        <div>
+          <span className="section-eyebrow">Chapter overview</span>
+          <h2 className="panel-title">Section readiness</h2>
+        </div>
+        <span className="count-chip">{sectionResults.length} sections</span>
+      </div>
       <div className="table-wrap">
         <table className="data-table">
           <thead>
@@ -848,10 +995,10 @@ function AlignmentMatrixPanel({ rows = [] }) {
         <div className="chart-wrap">
           <ResponsiveContainer width="100%" height={260}>
             <BarChart data={chartData} margin={{ top: 8, right: 16, left: 0, bottom: 8 }}>
-              <CartesianGrid stroke="#1f2d4d" vertical={false} />
-              <XAxis dataKey="name" stroke="#94a3b8" tick={{ fontSize: 11 }} interval={0} />
-              <YAxis domain={[0, 1]} stroke="#94a3b8" tick={{ fontSize: 11 }} />
-              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: "rgba(34,211,238,0.08)" }} />
+              <CartesianGrid stroke="var(--chart-grid)" vertical={false} />
+              <XAxis dataKey="name" stroke="var(--chart-axis)" tick={{ fontSize: 11 }} interval={0} />
+              <YAxis domain={[0, 1]} stroke="var(--chart-axis)" tick={{ fontSize: 11 }} />
+              <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: "var(--chart-hover)" }} />
               <Bar dataKey="score" radius={[6, 6, 0, 0]}>
                 {chartData.map((entry, i) => (
                   <Cell key={i} fill={coverageFill(entry.level.replace(" Alignment", ""))} />
@@ -1020,7 +1167,7 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
       {isManuscript && (
           <div style={{ marginBottom: 12 }}>
             <label style={{ marginRight: 8, fontWeight: 500 }}>Select section:</label>
-            <select value={selectedSectionName} onChange={(e) => setSelectedSectionName(e.target.value)} style={{ padding: "4px 8px", borderRadius: 4, background: "#1e293b", color: "#e2e8f0", border: "1px solid #334155" }}>
+            <select id="evidence-section" name="evidence_section" className="section-select" value={selectedSectionName} onChange={(e) => setSelectedSectionName(e.target.value)}>
               {sectionOptions.map(opt => <option key={opt} value={opt}>{opt === "Overall" ? "Overall (Average)" : opt}</option>)}
             </select>
           </div>
@@ -1046,16 +1193,16 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
             layout="vertical"
             margin={{ top: 8, right: 24, left: 0, bottom: 8 }}
           >
-            <CartesianGrid stroke="#1f2d4d" horizontal={false} />
-            <XAxis type="number" domain={[0, 1]} stroke="#94a3b8" tick={{ fontSize: 11 }} />
+            <CartesianGrid stroke="var(--chart-grid)" horizontal={false} />
+            <XAxis type="number" domain={[0, 1]} stroke="var(--chart-axis)" tick={{ fontSize: 11 }} />
             <YAxis
               type="category"
               dataKey="name"
-              stroke="#94a3b8"
+              stroke="var(--chart-axis)"
               width={180}
               tick={{ fontSize: 11 }}
             />
-            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: "rgba(34,211,238,0.08)" }} />
+            <Tooltip contentStyle={CHART_TOOLTIP_STYLE} cursor={{ fill: "var(--chart-hover)" }} />
             <Bar dataKey="score" radius={[0, 6, 6, 0]}>
               {chartData.map((entry, i) => (
                 <Cell key={i} fill={coverageFill(entry.level)} />
@@ -1064,16 +1211,18 @@ function EvidenceCoveragePanel({ result, isManuscript, prevResult }) {
           </BarChart>
         </ResponsiveContainer>
       </div>
-      <div className="muted small" style={{ marginTop: 12 }}>
-        Showing evidence coverage for:<br/>
-        - Document hash: {result.document_hash ? result.document_hash.substring(0, 8) : "N/A"}<br/>
-        - File name: {result.source_filename || "Pasted Text"}<br/>
-        - Selected section: {selectedSectionName === "Overall" ? (isManuscript ? "Overall (Average)" : resolvedSectionLabel(result)) : selectedSectionName}<br/>
-        - Scoring section: {isManuscript && selectedSectionName !== "Overall" ? result.section_details?.find(s => resolvedSectionLabel(s) === selectedSectionName)?.scoring_section : result.scoring_section || "Overall"}<br/>
-        - Section word count: {currentSectionCount}<br/>
-        - Criteria count: {chartData.length}<br/>
-        - Average similarity: {avgSimilarity.toFixed(3)}
-      </div>
+      <details className="technical-meta">
+        <summary>Analysis details</summary>
+        <dl>
+          <div><dt>Document ID</dt><dd>{result.document_hash ? result.document_hash.substring(0, 8) : "N/A"}</dd></div>
+          <div><dt>Source</dt><dd>{result.source_filename || "Pasted text"}</dd></div>
+          <div><dt>Selected section</dt><dd>{selectedSectionName === "Overall" ? (isManuscript ? "Overall average" : resolvedSectionLabel(result)) : selectedSectionName}</dd></div>
+          <div><dt>Scoring section</dt><dd>{isManuscript && selectedSectionName !== "Overall" ? result.section_details?.find(s => resolvedSectionLabel(s) === selectedSectionName)?.scoring_section : result.scoring_section || "Overall"}</dd></div>
+          <div><dt>Word count</dt><dd>{currentSectionCount}</dd></div>
+          <div><dt>Criteria</dt><dd>{chartData.length}</dd></div>
+          <div><dt>Average similarity</dt><dd>{avgSimilarity.toFixed(3)}</dd></div>
+        </dl>
+      </details>
       <div className="table-wrap" style={{ marginTop: 12 }}>
         <table className="data-table">
           <thead>
@@ -1182,7 +1331,7 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
         {diagnosis && (
           <>
             <h4 className="micro-head">
-              Diagnosis {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+              Diagnosis
             </h4>
             <p>{diagnosis}</p>
           </>
@@ -1191,16 +1340,16 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
         {nextBestAction && (
           <>
             <h4 className="micro-head">
-              Next Best Action {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+              Next Best Action
             </h4>
-            <p style={{ color: "#38bdf8", fontWeight: 500 }}>{nextBestAction}</p>
+            <p className="next-action-copy">{nextBestAction}</p>
           </>
         )}
 
         {panelRisk && (
           <>
             <h4 className="micro-head">
-              Likely Panel Risk {isGemini && <span title="AI Generated" style={{ fontSize: "0.8em", marginLeft: "4px" }}>✨</span>}
+              Likely Panel Risk
             </h4>
             <p>{panelRisk}</p>
           </>
@@ -1220,15 +1369,15 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
                 bgCol = "rgba(251, 146, 60, 0.1)";
               }
               return (
-                <div key={i} style={{ borderLeft: `4px solid ${borderCol}`, background: bgCol, padding: "8px 12px", borderRadius: "4px" }}>
+                <article key={i} className="context-highlight" style={{ "--highlight-color": borderCol, "--highlight-bg": bgCol }}>
                   <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                     <strong style={{ color: borderCol, fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h.highlight_type}</strong>
                     <Badge value={h.severity} tone={h.severity === "High" ? "danger" : "warn"} />
                   </div>
-                  <p style={{ fontStyle: "italic", margin: "4px 0", color: "#e2e8f0", fontSize: "0.95rem" }}>"{h.text}"</p>
-                  <p className="muted small" style={{ margin: "4px 0 2px" }}><strong>Why:</strong> {h.reason}</p>
-                  <p className="muted small" style={{ margin: 0, color: "#a78bfa" }}><strong>Suggest:</strong> {h.suggested_revision}</p>
-                </div>
+                  <blockquote>{h.text}</blockquote>
+                  <p className="muted small"><strong>Why:</strong> {h.reason}</p>
+                  <p className="highlight-suggestion"><strong>Try:</strong> {h.suggested_revision}</p>
+                </article>
               );
             })}
           </div>
@@ -1257,11 +1406,11 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
         {suggestedWording.length > 0 && (
           <>
             <h4 className="micro-head">
-              Suggested Revision Wording {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+              Suggested Revision Wording
             </h4>
             <ul className="bare-list">
               {suggestedWording.map((wording, i) => (
-                <li key={i} style={{ fontFamily: "monospace", fontSize: "0.9em", color: "#a78bfa", background: "#2e1065", padding: "4px 8px", borderRadius: "4px", marginBottom: "4px" }}>
+                <li key={i} className="wording-card">
                   {wording}
                 </li>
               ))}
@@ -1272,7 +1421,7 @@ const suggestedWording = isGemini && section.dynamic_suggested_revision_wording 
         {defenseQs.length > 0 && (
           <>
             <h4 className="micro-head">
-              Top 3 Defense Questions {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+              Top 3 Defense Questions
             </h4>
             <ul className="bare-list">
               {defenseQs.map((q, i) => (
@@ -1385,19 +1534,20 @@ function OverallNotesPanel({ notes = [] }) {
 function DownloadReportPanel({ filename }) {
   if (!filename) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Generated Report</h2>
+    <section className="panel report-cta">
+      <div>
+        <span className="section-eyebrow">Take it with you</span>
+        <h2 className="panel-title">Download the review report</h2>
+        <p className="muted small">A printable copy of the scores, evidence gaps, and revision priorities.</p>
+      </div>
       <a
         className="btn-primary download-link"
         href={`${API_BASE_URL}/download-report/${filename}`}
         target="_blank"
         rel="noreferrer"
       >
-        Download PDF Report
+        Download PDF
       </a>
-      <p className="muted small" style={{ marginTop: 6 }}>
-        {filename}
-      </p>
     </section>
   );
 }
@@ -1405,11 +1555,17 @@ function DownloadReportPanel({ filename }) {
 /* ───────────────────────── Section Result Panel ───────────────────────── */
 
 function ContextualHighlightsPanel({ highlights = [] }) {
+  if (!highlights.length) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Contextual Highlights</h2>
-      {highlights.length > 0 ? (
-        <div style={{ display: "flex", flexDirection: "column", gap: "8px" }}>
+    <section className="panel highlights-panel">
+      <div className="panel-heading-row">
+        <div>
+          <span className="section-eyebrow">Check these claims</span>
+          <h2 className="panel-title">Contextual highlights</h2>
+        </div>
+        <span className="count-chip">{highlights.length}</span>
+      </div>
+        <div className="context-highlight-list">
           {highlights.map((h, i) => {
             let borderCol = "#facc15";
             let bgCol = "rgba(250,204,21,0.1)";
@@ -1421,21 +1577,18 @@ function ContextualHighlightsPanel({ highlights = [] }) {
               bgCol = "rgba(251,146,60,0.1)";
             }
             return (
-              <div key={i} style={{ borderLeft: `4px solid ${borderCol}`, background: bgCol, padding: "8px 12px", borderRadius: "4px" }}>
+              <article key={i} className="context-highlight" style={{ "--highlight-color": borderCol, "--highlight-bg": bgCol }}>
                 <div style={{ display: "flex", alignItems: "center", gap: "8px", marginBottom: "4px" }}>
                   <strong style={{ color: borderCol, fontSize: "0.85rem", textTransform: "uppercase", letterSpacing: "0.05em" }}>{h.highlight_type}</strong>
                   <Badge value={h.severity} tone={h.severity === "High" ? "danger" : "warn"} />
                 </div>
-                <p style={{ fontStyle: "italic", margin: "4px 0", color: "#e2e8f0", fontSize: "0.95rem" }}>"{h.text}"</p>
-                <p className="muted small" style={{ margin: "4px 0 2px" }}><strong>Why:</strong> {h.reason}</p>
-                <p className="muted small" style={{ margin: 0, color: "#a78bfa" }}><strong>Suggest:</strong> {h.suggested_revision}</p>
-              </div>
+                <blockquote>{h.text}</blockquote>
+                <p className="muted small"><strong>Why:</strong> {h.reason}</p>
+                <p className="highlight-suggestion"><strong>Try:</strong> {h.suggested_revision}</p>
+              </article>
             );
           })}
         </div>
-      ) : (
-        <p className="muted small">No major overclaim or vague evidence highlights detected.</p>
-      )}
     </section>
   );
 }
@@ -1451,33 +1604,46 @@ function SectionResultPanel({ result, prevResult }) {
     : result.suggested_revision_wording || [];
 
   return (
-    <>
+    <div className="results-dashboard">
+      <ResultHeading
+        title="Section review"
+        subtitle="Your score, strongest next move, and supporting evidence are organized below."
+        result={result}
+      />
       <ExecutiveSummary result={result} />
-      {diagnosis && (
-        <section className="panel">
-          <h2 className="panel-title">
-            Diagnosis {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
-          </h2>
-          <p>{diagnosis}</p>
-          {result.score_summary && <p className="muted small">{result.score_summary}</p>}
-        </section>
-      )}
-      {nextBestAction && (
-        <section className="panel">
-          <h2 className="panel-title">
-            Next Best Action {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
-          </h2>
-          <p style={{ color: "#38bdf8", fontWeight: 500 }}>{nextBestAction}</p>
-        </section>
-      )}
-      {panelRisk && (
-        <section className="panel">
-          <h2 className="panel-title">
-            Likely Panel Risk {isGemini && <span title="AI Generated" style={{ fontSize: "0.8em", marginLeft: "4px" }}>✨</span>}
-          </h2>
-          <p>{panelRisk}</p>
-        </section>
-      )}
+      <section className="review-brief" aria-label="Review brief">
+        {diagnosis && (
+          <article className="brief-card brief-diagnosis">
+            <span className="brief-index">01</span>
+            <div>
+              <span className="section-eyebrow">What we found</span>
+              <h3>Diagnosis</h3>
+              <p>{diagnosis}</p>
+              {result.score_summary && <p className="muted small">{result.score_summary}</p>}
+            </div>
+          </article>
+        )}
+        {nextBestAction && (
+          <article className="brief-card brief-action">
+            <span className="brief-index">02</span>
+            <div>
+              <span className="section-eyebrow">Do this first</span>
+              <h3>Next best action</h3>
+              <p>{nextBestAction}</p>
+            </div>
+          </article>
+        )}
+        {panelRisk && (
+          <article className="brief-card brief-risk">
+            <span className="brief-index">03</span>
+            <div>
+              <span className="section-eyebrow">Prepare to answer</span>
+              <h3>Likely panel concern</h3>
+              <p>{panelRisk}</p>
+            </div>
+          </article>
+        )}
+      </section>
       <ContextualHighlightsPanel highlights={highlights} isGemini={isGemini} />
       <EvidenceCoveragePanel result={result} isManuscript={false} prevResult={prevResult} />
       <RecommendationsPanel
@@ -1488,19 +1654,25 @@ function SectionResultPanel({ result, prevResult }) {
         isGemini={isGemini}
       />
       <DownloadReportPanel filename={result.report_filename} />
-    </>
+    </div>
   );
 }
 
 function RecommendationsPanel({ priorityFixes = [], revisions = [], suggestedWording = [], defenseQs = [], isGemini = false }) {
   if (!priorityFixes.length && !revisions.length && !suggestedWording.length && !defenseQs.length) return null;
   return (
-    <section className="panel">
-      <h2 className="panel-title">Recommendations &amp; Defense Prep</h2>
+    <section className="panel recommendations-panel">
+      <div className="panel-heading-row">
+        <div>
+          <span className="section-eyebrow">Revision plan</span>
+          <h2 className="panel-title">Recommendations &amp; defense prep</h2>
+        </div>
+      </div>
+      <div className="recommendation-grid">
 
       {priorityFixes.length > 0 && (
-        <>
-          <h3 className="subhead">Priority Fixes</h3>
+        <div className="recommendation-block">
+          <h3 className="subhead">Priority fixes</h3>
           <ul className="bare-list">
             {priorityFixes.slice(0, 5).map((fix, i) => (
               <li key={i}>
@@ -1513,49 +1685,50 @@ function RecommendationsPanel({ priorityFixes = [], revisions = [], suggestedWor
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       {revisions.length > 0 && (
-        <>
+        <div className="recommendation-block">
           <h3 className="subhead">
-            Revision Suggestions {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+            Revision Suggestions
           </h3>
           <ul className="bare-list">
             {revisions.slice(0, 5).map((r, i) => (
               <li key={i}>{r}</li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       {suggestedWording.length > 0 && (
-        <>
+        <div className="recommendation-block recommendation-wording">
           <h3 className="subhead">
-            Suggested Revision Wording {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+            Suggested Revision Wording
           </h3>
           <ul className="bare-list">
             {suggestedWording.slice(0, 3).map((w, i) => (
-              <li key={i} style={{ fontFamily: "monospace", fontSize: "0.9em", color: "#a78bfa", background: "#2e1065", padding: "4px 8px", borderRadius: "4px", marginBottom: "4px" }}>
+              <li key={i} className="wording-card">
                 {w}
               </li>
             ))}
           </ul>
-        </>
+        </div>
       )}
 
       {defenseQs.length > 0 && (
-        <>
+        <div className="recommendation-block">
           <h3 className="subhead">
-            Likely Defense Questions {isGemini && <span title="AI Generated" style={{ fontSize: '0.8em', marginLeft: '4px' }}>✨</span>}
+            Likely Defense Questions
           </h3>
-          <ul className="bare-list">
+          <ol className="question-list">
             {defenseQs.slice(0, 5).map((q, i) => (
               <li key={i}>{q}</li>
             ))}
-          </ul>
-        </>
+          </ol>
+        </div>
       )}
+      </div>
     </section>
   );
 }
@@ -1709,10 +1882,10 @@ function CompareResultPanel({ result }) {
                     <td>
                       <span style={{
                         color: row.score_change > 0.001
-                          ? "#4ade80"
+                          ? "#2f7d4c"
                           : row.score_change < -0.001
-                          ? "#f87171"
-                          : "#94a3b8"
+                          ? "#c53d3d"
+                          : "#66736e"
                       }}>
                         {row.score_change > 0 ? "+" : ""}
                         {row.score_change?.toFixed(3)}
@@ -1836,7 +2009,7 @@ function EvaluateResultPanel({ result }) {
                     </td>
                   </tr>
                 ))}
-                <tr style={{ fontWeight: 600, borderTop: "2px solid #1f2d4d" }}>
+                <tr style={{ fontWeight: 600, borderTop: "2px solid #c7d5d0" }}>
                   <td>Overall</td>
                   <td>{totalSamples}</td>
                   <td>{totalCorrect}</td>
